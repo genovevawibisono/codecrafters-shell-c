@@ -29,13 +29,13 @@ static bool myTypeCommandsCheck(char *str, char commands[][16], int commandsSize
 static void myTypeCommands(char *str, char commands[][16], int commandsSize);
 static bool myTypeFileCheck(char *str);
 static void myTypeFile(char *str);
-static void myExec(char *path, int argc, char **argv);
+static void myExec(char *path, int argc, char **argv, char *redirFile, int redirectType);
 static bool fileExists(char *str);
 static char *getFile(char *str);
 static void myPwd(void);
 static void myCd(char *dest);
 static char *parseSingleQuote(char *str);
-static void myCat(int argc, char *argv[]);
+static void myCat(int argc, char *argv[], char *redirFile, int redirectType);
 static void readFile(const char *str);
 static char *parseDoubleQuote(char *str);
 static bool singleQuoteCheck(char *str);
@@ -86,14 +86,12 @@ static int driver(void) {
             redirectType = 4; 
 		} 
 		else if (redirStdoutAppend != NULL) { 
-			// Remove `1`
             memmove(redirStdoutAppend, redirStdoutAppend + 1, strlen(redirStdoutAppend)); 
             redir = redirStdoutAppend;
 			// Append stdout
             redirectType = 3; 
         } 
 		else if (redirStderr != NULL) {
-			// Remove `2`
             memmove(redirStderr, redirStderr + 1, strlen(redirStderr)); 
             redir = redirStderr;
             redirectType = 2;
@@ -106,23 +104,18 @@ static int driver(void) {
         } 
 		else if (append != NULL) {
             redir = append;
-			// Append stdout
             redirectType = 3; 
         } 
 		else {
             redir = strchr(input, '>');
-			// Default to stdout
             redirectType = 1; 
         }
 
         char *filename = NULL;
         if (redir != NULL) {
-			// Split command and filename
             *redir = '\0';  
             redir += (redirectType == 3 || redirectType == 4) ? 2 : 1;
-			// Remove leading spaces
             while (isspace(*redir)) redir++; 
-			// ✅ Remove quotes from filename
             filename = stripQuotesAndEscapes(redir); 
         	char *cleanedInput = stripQuotesAndEscapes(input);
 
@@ -150,9 +143,7 @@ static int driver(void) {
 				}
             }
 
-            // Execute the command
             char *token = strtok(cleanedInput, " ");
-			// Ignore empty input
             if (token == NULL) continue; 
 
             if (strcmp(token, "echo") == 0) {
@@ -172,7 +163,7 @@ static int driver(void) {
 					token = strtok(NULL, " ");
 				}
 				argv[argc] = NULL;
-				myCat(argc, argv);
+				myCat(argc, argv, filename, redirectType);
             } else {
                 char *argv[15];
                 int argc = 0;
@@ -183,7 +174,7 @@ static int driver(void) {
                 argv[argc] = NULL;
                 char *path = getFile(argv[0]);
                 if (path != NULL) {
-                    myExec(path, argc, argv);
+                    myExec(path, argc, argv, filename, redirectType);
                 } else {
                     fprintf(stderr, "%s: command not found\n", argv[0]);
                 }
@@ -199,7 +190,6 @@ static int driver(void) {
             close(savedFd);
         }
         } else {
-            // Execute command normally (without redirection)
             if (strcmp(cleanedInput, "exit 0") == 0) {
                 free(cleanedInput);
                 myExit();
@@ -214,7 +204,7 @@ static int driver(void) {
                 argv[argc] = NULL;
                 char *path = getFile(argv[0]);
                 if (path != NULL) {
-                    myExec(path, argc, argv);
+                    myExec(path, argc, argv, filename, redirectType);
                 } else {
                     fprintf(stderr, "%s: command not found\n", argv[0]);
                 }
@@ -301,7 +291,7 @@ static int driver(void) {
 						}
 					}
 					argv[argc] = NULL;
-					myCat(argc, argv);
+					myCat(argc, argv, filename, redirectType);
 					free(buffer);
 					continue;
 				}
@@ -331,7 +321,7 @@ static int driver(void) {
 						}
 					}
 					argv[argc] = NULL;
-					myCat(argc, argv);
+					myCat(argc, argv, filename, redirectType);
 					free(buffer);
 					continue;
 				}
@@ -372,7 +362,7 @@ static int driver(void) {
 					}
 					argv[argc] = NULL;
 					// Execute cat with parsed filenames
-					myCat(argc, argv);  
+					myCat(argc, argv, filename, redirectType);  
 					free(buffer);
     				continue;
 				}
@@ -399,7 +389,7 @@ static int driver(void) {
 				argv[argc] = NULL;
 				char *path = getFile(argv[0]);
 				if (path != NULL) {
-					myExec(path, argc, argv);
+					myExec(path, argc, argv, filename, redirectType);
 				}
 				else {
 					printf("%s: command not found\n", argv[0]);
@@ -506,16 +496,25 @@ static void myTypeFile(char *str) {
 	return;
 }
 
-static void myExec(char *path, int argc, char **argv) {
+static void myExec(char *path, int argc, char **argv, char *redirFile, int redirectType) {
     pid_t pid = fork();
-    if (pid == 0) { 
-		// Child process
+    if (pid == 0) { // Child process
+        if (redirFile != NULL && redirectType != 0) {
+            if (redirectType == 1) {
+                if (redirectStdoutToFile(redirFile) == -1) exit(1);
+            } else if (redirectType == 2) {
+                if (redirectStderrToFile(redirFile) == -1) exit(1);
+            } else if (redirectType == 3) {
+                if (appendStdoutToFile(redirFile) == -1) exit(1);
+            } else if (redirectType == 4) {
+                if (appendStderrToFile(redirFile) == -1) exit(1);
+            }
+        }
         execv(path, argv);
         perror("execv");
         exit(1);
     } else if (pid < 0) {
         perror("fork");
-        exit(1);
     } else {
         int status;
         waitpid(pid, &status, 0);
@@ -609,11 +608,25 @@ static char *parseSingleQuote(char *str) {
     return parsed;
 }
 
-static void myCat(int argc, char *argv[]) {
-	for (int i = 0; i < argc; i++) {
-		readFile(argv[i]);
-	}
-	fflush(stdout);
+static void myCat(int argc, char *argv[], char *redirFile, int redirectType) {
+    pid_t pid = fork();
+    if (pid == 0) {
+        if (redirFile != NULL && redirectType != 0) {
+            if (redirectType == 1 && redirectStdoutToFile(redirFile) == -1) exit(1);
+            else if (redirectType == 2 && redirectStderrToFile(redirFile) == -1) exit(1);
+            else if (redirectType == 3 && appendStdoutToFile(redirFile) == -1) exit(1);
+            else if (redirectType == 4 && appendStderrToFile(redirFile) == -1) exit(1);
+        }
+        for (int i = 0; i < argc; i++) {
+            readFile(argv[i]);
+        }
+        fflush(stdout);
+        exit(0);
+    } else if (pid > 0) {
+        wait(NULL);
+    } else {
+        perror("fork");
+    }
 }
 
 static void readFile(const char *str) {

@@ -2,10 +2,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "exit.h"
-
 #define MAX_COMMAND_LENGTH 1024
 #define DEFAULT_EXIT_STATUS 0
+
+void shell_exit(int status);
 
 int main(int argc, char *argv[]) {
 	while (1) {
@@ -27,4 +27,8 @@ int main(int argc, char *argv[]) {
 	}
 
     return 0;
+}
+
+void shell_exit(int status) {
+    exit(status);
 }

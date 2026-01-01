@@ -21,14 +21,16 @@ struct command {
 	command_function func;
 };
 
-void trim_newline(char *s);
-void split_command(char *line, char **cmd, char **args);
-void shell_exit(struct command_context *context);
-void shell_echo(struct command_context *ctx);
+static void trim_newline(char *s);
+static void split_command(char *line, char **cmd, char **args);
+static void shell_exit(struct command_context *ctx);
+static void shell_echo(struct command_context *ctx);
+static void shell_type(struct command_context *ctx);
 
 struct command commands[] = {
     { "exit", shell_exit },
     { "echo", shell_echo },
+	{ "type", shell_type },
 };
 
 #define NUM_COMMANDS (sizeof(commands) / sizeof(commands[0]))
@@ -71,14 +73,14 @@ int main(void) {
     }
 }
 
-void trim_newline(char *s) {
+static void trim_newline(char *s) {
     size_t len = strlen(s);
     if (len > 0 && s[len - 1] == '\n') {
         s[len - 1] = '\0';
     }
 }
 
-void split_command(char *line, char **cmd, char **args) {
+static void split_command(char *line, char **cmd, char **args) {
     *cmd = line;
 
     char *space = strchr(line, ' ');
@@ -90,11 +92,24 @@ void split_command(char *line, char **cmd, char **args) {
     }
 }
 
-void shell_exit(struct command_context *context) {
-	(void) context;
+static void shell_exit(struct command_context *ctx) {
+	(void) ctx;
     exit(DEFAULT_EXIT_STATUS);
 }
 
-void shell_echo(struct command_context *ctx) {
+static void shell_echo(struct command_context *ctx) {
     fprintf(stdout, "%s\n", ctx->args);
+}
+
+static void shell_type(struct command_context *ctx) {
+	bool found = false;
+	for (size_t i = 0; i < NUM_COMMANDS; i++) {
+		if (strcmp(commands[i].name, ctx->args) == 0) {
+			fprintf(stdout, "%s is a shell builtin\n", ctx->args);
+			found = true;
+			return;
+		}
+	}
+
+	fprintf(stdout, "%s: not found\n", ctx->args);
 }

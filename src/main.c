@@ -2,6 +2,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <dirent.h>
 
 #define MAX_COMMAND_LENGTH 1024
 #define DEFAULT_EXIT_STATUS 0
@@ -111,5 +114,45 @@ static void shell_type(struct command_context *ctx) {
 		}
 	}
 
-	fprintf(stdout, "%s: not found\n", ctx->args);
+	char *path_env = getenv("PATH");
+	if (path_env) {
+		char *path_copy = malloc(strlen(path_env) * sizeof(char));
+        if (path_copy == NULL) {
+            fprintf(stderr, "[shell type] failed to malloc for path copy string\n");
+        }
+        strcpy(path_copy, path_env);
+        char *token = strtok(path_copy, ":");
+        if (token == NULL) {
+            fprintf(stderr, "[shell type] token is null\n");
+        }
+        while (token) {
+            DIR *dir = opendir(token);
+            if (dir) {
+                struct dirent *entry;
+                while ((entry = readdir(dir)) != NULL) {
+                    if (strcmp(entry->d_name, ctx->args) == 0) {
+                        char full_path[1024];
+                        snprintf(full_path, sizeof(full_path), "%s/%s", token, entry->d_name);
+                        if (access(full_path, X_OK) == 0) {
+                            struct stat path_stat;
+                            stat(full_path, &path_stat);
+                            if (S_ISREG(path_stat.st_mode)) {
+                                fprintf(stdout, "%s is %s\n", entry->d_name, full_path);
+                                found = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                closedir(dir);
+            }
+            if (found) {
+                break;
+            }
+            token = strtok(NULL, ":");
+        }
+	}
+    if (!found) {
+	    fprintf(stdout, "%s: not found\n", ctx->args);
+    }
 }

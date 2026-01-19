@@ -5,6 +5,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <sys/wait.h>
 
 #define MAX_COMMAND_LENGTH 1024
 #define DEFAULT_EXIT_STATUS 0
@@ -14,7 +15,9 @@
 struct command_context {
 	bool redirect;
 	char *out_file;
-	char *args;
+	char *command_name;
+    int argc;
+    char **argv;
 };
 
 typedef void (*command_function)(struct command_context *);
@@ -26,9 +29,12 @@ struct command {
 
 static void trim_newline(char *s);
 static void split_command(char *line, char **cmd, char **args);
+static void populate_argv(struct command_context *ctx, char *cmd);
+static void debug_print_context(struct command_context *ctx);
 static void shell_exit(struct command_context *ctx);
 static void shell_echo(struct command_context *ctx);
 static void shell_type(struct command_context *ctx);
+static void shell_exec(struct command_context *ctx);
 
 struct command commands[] = {
     { "exit", shell_exit },
@@ -58,8 +64,14 @@ int main(void) {
         struct command_context ctx = {
             .redirect = false,
             .out_file = NULL,
-            .args = args
+            .command_name = cmd,
+            .argc = 0,
+            .argv = NULL,
         };
+
+        populate_argv(&ctx, args);
+
+        // debug_print_context(&ctx);
 
         bool found = false;
         for (size_t i = 0; i < NUM_COMMANDS; i++) {
@@ -70,8 +82,9 @@ int main(void) {
             }
         }
 
+        // If not a builtin, try to execute it as an external program
         if (!found) {
-            printf("%s: command not found\n", cmd);
+            shell_exec(&ctx);
         }
     }
 }
@@ -95,20 +108,83 @@ static void split_command(char *line, char **cmd, char **args) {
     }
 }
 
+static void populate_argv(struct command_context *ctx, char *args) {
+    int count = 1;
+    
+    if (strlen(args) > 0) {
+        char *temp = strdup(args);
+        char *token = strtok(temp, " ");
+        
+        while (token != NULL) {
+            count++;
+            token = strtok(NULL, " ");
+        }
+        free(temp);
+    }
+    
+    ctx->argv = malloc((count + 1) * sizeof(char *));
+    
+    ctx->argv[0] = strdup(ctx->command_name);
+    
+    int i = 1;
+    if (strlen(args) > 0) {
+        char *token = strtok(args, " ");
+        while (token != NULL) {
+            ctx->argv[i] = strdup(token);
+            i++;
+            token = strtok(NULL, " ");
+        }
+    }
+    
+    ctx->argv[i] = NULL;
+    ctx->argc = count;
+}
+
+static void debug_print_context(struct command_context *ctx) {
+    fprintf(stderr, "=== Command Context Debug ===\n");
+    fprintf(stderr, "Command name: %s\n", ctx->command_name ? ctx->command_name : "(null)");
+    fprintf(stderr, "Redirect: %s\n", ctx->redirect ? "true" : "false");
+    fprintf(stderr, "Output file: %s\n", ctx->out_file ? ctx->out_file : "(null)");
+    fprintf(stderr, "argc: %d\n", ctx->argc);
+    fprintf(stderr, "argv:\n");
+    
+    if (ctx->argv) {
+        for (int i = 0; i < ctx->argc; i++) {
+            fprintf(stderr, "  argv[%d]: %s\n", i, ctx->argv[i]);
+        }
+        fprintf(stderr, "  argv[%d]: %s (terminator)\n", ctx->argc, 
+                ctx->argv[ctx->argc] ? ctx->argv[ctx->argc] : "NULL");
+    } else {
+        fprintf(stderr, "  (argv is NULL)\n");
+    }
+    
+    fprintf(stderr, "=============================\n");
+}
+
 static void shell_exit(struct command_context *ctx) {
 	(void) ctx;
     exit(DEFAULT_EXIT_STATUS);
 }
 
 static void shell_echo(struct command_context *ctx) {
-    fprintf(stdout, "%s\n", ctx->args);
+    for (int i = 1; i < ctx->argc; i++) {
+        fprintf(stdout, "%s ", ctx->argv[i]);
+    }
+    fprintf(stdout, "\n");
 }
 
 static void shell_type(struct command_context *ctx) {
+    if (ctx->argc < 2) {
+        fprintf(stderr, "type: missing argument\n");
+        return;
+    }
+    
+    char *target = ctx->argv[1]; 
+    
 	bool found = false;
 	for (size_t i = 0; i < NUM_COMMANDS; i++) {
-		if (strcmp(commands[i].name, ctx->args) == 0) {
-			fprintf(stdout, "%s is a shell builtin\n", ctx->args);
+		if (strcmp(commands[i].name, target) == 0) {
+			fprintf(stdout, "%s is a shell builtin\n", target);
 			found = true;
 			return;
 		}
@@ -130,7 +206,7 @@ static void shell_type(struct command_context *ctx) {
             if (dir) {
                 struct dirent *entry;
                 while ((entry = readdir(dir)) != NULL) {
-                    if (strcmp(entry->d_name, ctx->args) == 0) {
+                    if (strcmp(entry->d_name, target) == 0) {
                         char full_path[1024];
                         snprintf(full_path, sizeof(full_path), "%s/%s", token, entry->d_name);
                         if (access(full_path, X_OK) == 0) {
@@ -153,6 +229,67 @@ static void shell_type(struct command_context *ctx) {
         }
 	}
     if (!found) {
-	    fprintf(stdout, "%s: not found\n", ctx->args);
+	    fprintf(stdout, "%s: not found\n", target);
     }
+}
+
+static void shell_exec(struct command_context *ctx) {
+    char *path_env = getenv("PATH");
+    char *executable_path = NULL;
+    
+    if (path_env) {
+        char *path_copy = strdup(path_env);
+        char *token = strtok(path_copy, ":");
+        
+        while (token) {
+            DIR *dir = opendir(token);
+            if (dir) {
+                struct dirent *entry;
+                while ((entry = readdir(dir)) != NULL) {
+                    if (strcmp(entry->d_name, ctx->command_name) == 0) {
+                        char full_path[1024];
+                        snprintf(full_path, sizeof(full_path), "%s/%s", 
+                                token, entry->d_name);
+                        
+                        if (access(full_path, X_OK) == 0) {
+                            struct stat path_stat;
+                            stat(full_path, &path_stat);
+                            if (S_ISREG(path_stat.st_mode)) {
+                                executable_path = strdup(full_path);
+                                break;
+                            }
+                        }
+                    }
+                }
+                closedir(dir);
+            }
+            if (executable_path) {
+                break;
+            }
+            token = strtok(NULL, ":");
+        }
+        free(path_copy);
+    }
+    
+    if (!executable_path) {
+        fprintf(stdout, "%s: command not found\n", ctx->command_name);
+        return;
+    }
+    
+    pid_t pid = fork();
+    if (pid == -1) {
+        fprintf(stderr, "[shell exec] failed to fork\n");
+        free(executable_path);
+        return;
+    }
+
+    if (pid == 0) {
+        execv(executable_path, ctx->argv);
+        fprintf(stderr, "[shell exec] error in execv\n");
+        exit(1);
+    }
+
+    int status;
+    waitpid(pid, &status, 0);
+    free(executable_path);
 }

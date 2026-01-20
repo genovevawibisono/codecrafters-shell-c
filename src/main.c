@@ -1,3 +1,4 @@
+/* INCLUDE LIBRARIES */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -7,12 +8,14 @@
 #include <dirent.h>
 #include <sys/wait.h>
 
+/* DEFINE CONSTANTS */
 #define MAX_COMMAND_LENGTH 1024
 #define DEFAULT_EXIT_STATUS 0
 #define EXIT_LENGTH 4
 #define ECHO_LENGTH 4
 #define MAX_PATH_LENGTH 1024
 
+/* DEFINE STRUCTS AND TYPEDEFS */
 struct command_context {
 	bool redirect;
 	char *out_file;
@@ -28,6 +31,7 @@ struct command {
 	command_function func;
 };
 
+/* FUNCTION HEADERS */
 static void trim_newline(char *s);
 static void split_command(char *line, char **cmd, char **args);
 static void populate_argv(struct command_context *ctx, char *cmd);
@@ -37,15 +41,20 @@ static void shell_echo(struct command_context *ctx);
 static void shell_type(struct command_context *ctx);
 static void shell_exec(struct command_context *ctx);
 static void shell_pwd(struct command_context *ctx);
+static void shell_cd(struct command_context *ctx);
 
+/* OTHER HELPERS TO MAKE LIFE EASIER */
 struct command commands[] = {
     { "exit", shell_exit },
     { "echo", shell_echo },
 	{ "type", shell_type },
-    { "pwd", shell_pwd }
+    { "pwd", shell_pwd }, 
+    { "cd", shell_cd },
 };
 
 #define NUM_COMMANDS (sizeof(commands) / sizeof(commands[0]))
+
+/* MAIN FUNCTION */
 
 int main(void) {
     char line[MAX_COMMAND_LENGTH];
@@ -92,6 +101,7 @@ int main(void) {
     }
 }
 
+/* FUNCTION FUNCTIONS, LIKE THE REAL THINGS THAT DO THE WORK */
 static void trim_newline(char *s) {
     size_t len = strlen(s);
     if (len > 0 && s[len - 1] == '\n') {
@@ -298,6 +308,11 @@ static void shell_exec(struct command_context *ctx) {
 }
 
 static void shell_pwd(struct command_context *ctx) {
+    if (ctx == NULL) {
+        fprintf(stderr, "[shell pwd] command context is NULL\n");
+        return;
+    }
+
     char current_directory[MAX_PATH_LENGTH];
     char *cwd;
 
@@ -308,4 +323,32 @@ static void shell_pwd(struct command_context *ctx) {
     } 
 
     fprintf(stdout, "%s\n", current_directory);
+}
+
+static void shell_cd(struct command_context *ctx) {
+    if (ctx == NULL) {
+        fprintf(stderr, "[shell cd] command context is NULL\n");
+        return;
+    }
+
+    if (ctx->argc < 2 || ctx->argv[1] == NULL) {
+        fprintf(stderr, "cd: missing argument\n");
+        return;
+    }
+
+    char *target_dir = ctx->argv[1];
+
+    if (strcmp(target_dir, "~") == 0) {
+        target_dir = getenv("HOME");
+        if (target_dir == NULL) {
+            fprintf(stderr, "cd: HOME not set\n");
+            return;
+        }
+    }
+
+    int res = chdir(target_dir);
+    if (res == -1) {
+        fprintf(stderr, "cd: %s: No such file or directory\n", ctx->argv[1]);
+        return;
+    }
 }

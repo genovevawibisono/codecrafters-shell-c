@@ -11,6 +11,7 @@
 #define DEFAULT_EXIT_STATUS 0
 #define EXIT_LENGTH 4
 #define ECHO_LENGTH 4
+#define MAX_PATH_LENGTH 1024
 
 struct command_context {
 	bool redirect;
@@ -35,11 +36,13 @@ static void shell_exit(struct command_context *ctx);
 static void shell_echo(struct command_context *ctx);
 static void shell_type(struct command_context *ctx);
 static void shell_exec(struct command_context *ctx);
+static void shell_pwd(struct command_context *ctx);
 
 struct command commands[] = {
     { "exit", shell_exit },
     { "echo", shell_echo },
 	{ "type", shell_type },
+    { "pwd", shell_pwd }
 };
 
 #define NUM_COMMANDS (sizeof(commands) / sizeof(commands[0]))
@@ -292,4 +295,17 @@ static void shell_exec(struct command_context *ctx) {
     int status;
     waitpid(pid, &status, 0);
     free(executable_path);
+}
+
+static void shell_pwd(struct command_context *ctx) {
+    char current_directory[MAX_PATH_LENGTH];
+    char *cwd;
+
+    cwd = getcwd(current_directory, sizeof(current_directory));
+    if (cwd == NULL) {
+        fprintf(stderr, "[shell pwd] failed to getcwd\n");
+        return;
+    } 
+
+    fprintf(stdout, "%s\n", current_directory);
 }

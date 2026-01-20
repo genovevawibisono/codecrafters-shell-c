@@ -134,43 +134,52 @@ static void populate_argv(struct command_context *ctx, char *args) {
         return;
     }
     
-    // Buffer to accumulate a complete token (might be multiple quoted/unquoted parts)
+    // Buffer to accumulate a complete token
     char token_buffer[MAX_COMMAND_LENGTH] = {0};
     int buffer_pos = 0;
     
     char *p = args;
-    bool in_quotes = false;
+    // '\0' = not in quotes, '\'' = single, '"' = double
+    char quote_type = '\0';  
     
     while (*p != '\0') {
-        if (*p == '\'') {
-            in_quotes = !in_quotes;
+        // Handle quote characters
+        if ((*p == '\'' || *p == '"') && quote_type == '\0') {
+            // Start of quoted section
+            quote_type = *p;
+            p++;
+            continue;
+        }
+        else if (*p == quote_type && quote_type != '\0') {
+            // End of quoted section (matching quote found)
+            quote_type = '\0';
             p++;
             continue;
         }
         
-        if (*p == ' ' && !in_quotes) {
+        // Handle spaces
+        if (*p == ' ' && quote_type == '\0') {
             // Space outside quotes = end of token
             if (buffer_pos > 0) {
-                // Save accumulated token
                 token_buffer[buffer_pos] = '\0';
                 if (count >= capacity) {
                     capacity *= 2;
                     ctx->argv = realloc(ctx->argv, capacity * sizeof(char *));
                 }
                 ctx->argv[count++] = strdup(token_buffer);
-                // Reset buffer
-                buffer_pos = 0; 
+                buffer_pos = 0;
             }
             p++;
             continue;
         }
         
-        // Regular character (inside or outside quotes) - accumulate it
+        // Regular character - accumulate it
+        // (inside quotes or outside, doesn't matter)
         token_buffer[buffer_pos++] = *p;
         p++;
     }
     
-    // Don't forget the last token
+    // Save last token if exists
     if (buffer_pos > 0) {
         token_buffer[buffer_pos] = '\0';
         if (count >= capacity) {

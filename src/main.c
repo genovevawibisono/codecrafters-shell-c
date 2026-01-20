@@ -14,6 +14,7 @@
 #define EXIT_LENGTH 4
 #define ECHO_LENGTH 4
 #define MAX_PATH_LENGTH 1024
+#define ARGV_MAX_CAPACITY 1024
 
 /* DEFINE STRUCTS AND TYPEDEFS */
 struct command_context {
@@ -123,33 +124,63 @@ static void split_command(char *line, char **cmd, char **args) {
 
 static void populate_argv(struct command_context *ctx, char *args) {
     int count = 1;
-    
-    if (strlen(args) > 0) {
-        char *temp = strdup(args);
-        char *token = strtok(temp, " ");
-        
-        while (token != NULL) {
-            count++;
-            token = strtok(NULL, " ");
-        }
-        free(temp);
-    }
-    
-    ctx->argv = malloc((count + 1) * sizeof(char *));
-    
+    int capacity = ARGV_MAX_CAPACITY;
+    ctx->argv = malloc(capacity * sizeof(char *));
     ctx->argv[0] = strdup(ctx->command_name);
     
-    int i = 1;
-    if (strlen(args) > 0) {
-        char *token = strtok(args, " ");
-        while (token != NULL) {
-            ctx->argv[i] = strdup(token);
-            i++;
-            token = strtok(NULL, " ");
-        }
+    if (strlen(args) == 0) {
+        ctx->argv[1] = NULL;
+        ctx->argc = 1;
+        return;
     }
     
-    ctx->argv[i] = NULL;
+    // Buffer to accumulate a complete token (might be multiple quoted/unquoted parts)
+    char token_buffer[MAX_COMMAND_LENGTH] = {0};
+    int buffer_pos = 0;
+    
+    char *p = args;
+    bool in_quotes = false;
+    
+    while (*p != '\0') {
+        if (*p == '\'') {
+            in_quotes = !in_quotes;
+            p++;
+            continue;
+        }
+        
+        if (*p == ' ' && !in_quotes) {
+            // Space outside quotes = end of token
+            if (buffer_pos > 0) {
+                // Save accumulated token
+                token_buffer[buffer_pos] = '\0';
+                if (count >= capacity) {
+                    capacity *= 2;
+                    ctx->argv = realloc(ctx->argv, capacity * sizeof(char *));
+                }
+                ctx->argv[count++] = strdup(token_buffer);
+                // Reset buffer
+                buffer_pos = 0; 
+            }
+            p++;
+            continue;
+        }
+        
+        // Regular character (inside or outside quotes) - accumulate it
+        token_buffer[buffer_pos++] = *p;
+        p++;
+    }
+    
+    // Don't forget the last token
+    if (buffer_pos > 0) {
+        token_buffer[buffer_pos] = '\0';
+        if (count >= capacity) {
+            capacity *= 2;
+            ctx->argv = realloc(ctx->argv, capacity * sizeof(char *));
+        }
+        ctx->argv[count++] = strdup(token_buffer);
+    }
+    
+    ctx->argv[count] = NULL;
     ctx->argc = count;
 }
 

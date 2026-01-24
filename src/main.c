@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <dirent.h>
 #include <sys/wait.h>
+#include <fcntl.h>
 
 /* DEFINE CONSTANTS */
 #define MAX_COMMAND_LENGTH 1024
@@ -34,8 +35,6 @@ struct command {
 
 /* FUNCTION HEADERS */
 static void trim_newline(char *s);
-static void split_command(char *line, char **cmd, char **args);
-static void populate_argv(struct command_context *ctx, char *cmd);
 static void parse_command_line(char *line, struct command_context *ctx);
 static void debug_print_context(struct command_context *ctx);
 static void shell_exit(struct command_context *ctx);
@@ -107,6 +106,10 @@ int main(void) {
             free(ctx.argv[i]);
         }
         free(ctx.argv);
+
+        if (ctx.out_file) {
+            free(ctx.out_file);
+        }
     }
 
     return 0;
@@ -118,114 +121,6 @@ static void trim_newline(char *s) {
     if (len > 0 && s[len - 1] == '\n') {
         s[len - 1] = '\0';
     }
-}
-
-static void split_command(char *line, char **cmd, char **args) {
-    *cmd = line;
-
-    char *space = strchr(line, ' ');
-    if (space) {
-        *space = '\0';
-        *args = space + 1;
-    } else {
-        *args = "";
-    }
-}
-
-static void populate_argv(struct command_context *ctx, char *args) {
-    int count = 1, capacity = ARGV_MAX_CAPACITY;
-    ctx->argv = malloc(capacity * sizeof(char *));
-    ctx->argv[0] = strdup(ctx->command_name);
-    
-    if (strlen(args) == 0) {
-        ctx->argv[1] = NULL;
-        ctx->argc = 1;
-        return;
-    }
-    
-    // Buffer to accumulate a complete token
-    char token_buffer[MAX_COMMAND_LENGTH] = {0};
-    int buffer_pos = 0;
-    
-    char *p = args;
-    // '\0' = not in quotes, '\'' = single, '"' = double
-    char quote_type = '\0'; 
-    
-    while (*p != '\0') {
-        // Handle backslash OUTSIDE quotes
-        if (*p == '\\' && quote_type == '\0') {
-            // Skip the backslash
-            p++;  
-            if (*p != '\0') {
-                // Add the next character literally (even if it's special)
-                token_buffer[buffer_pos++] = *p;
-                p++;
-            }
-            continue;
-        }
-
-        // Handle backslash INSIDE DOUBLE QUOTES
-        if (*p == '\\' && quote_type == '"') {
-            // Peek at next character
-            if (*(p + 1) == '"' || *(p + 1) == '\\' || 
-                *(p + 1) == '$' || *(p + 1) == '`') {
-                // These are escapable in double quotes
-                p++;  // Skip the backslash
-                token_buffer[buffer_pos++] = *p;  // Add the escaped char
-                p++;
-                continue;
-            }
-            // For other characters, backslash is literal
-            // Fall through to add both backslash and next char
-        }
-        
-        // Handle quote characters (only if not escaped)
-        if ((*p == '\'' || *p == '"') && quote_type == '\0') {
-            // Start of quoted section
-            quote_type = *p;
-            p++;
-            continue;
-        }
-        else if (*p == quote_type && quote_type != '\0') {
-            // End of quoted section (matching quote found)
-            quote_type = '\0';
-            p++;
-            continue;
-        }
-        
-        // Handle spaces
-        if (*p == ' ' && quote_type == '\0') {
-            // Space outside quotes = end of token
-            if (buffer_pos > 0) {
-                token_buffer[buffer_pos] = '\0';
-                if (count >= capacity) {
-                    capacity *= 2;
-                    ctx->argv = realloc(ctx->argv, capacity * sizeof(char *));
-                }
-                ctx->argv[count++] = strdup(token_buffer);
-                buffer_pos = 0;
-            }
-            p++;
-            continue;
-        }
-        
-        // Regular character - accumulate it
-        token_buffer[buffer_pos++] = *p;
-        p++;
-    }
-    
-    // Save last token if exists
-    if (buffer_pos > 0) {
-        token_buffer[buffer_pos] = '\0';
-        if (count >= capacity) {
-            capacity *= 2;
-            ctx->argv = realloc(ctx->argv, capacity * sizeof(char *));
-        }
-        ctx->argv[count++] = strdup(token_buffer);
-    }
-    
-    ctx->argv[count] = NULL;
-    ctx->argc = count;
 }
 
 static void parse_command_line(char *line, struct command_context *ctx) {
@@ -240,18 +135,16 @@ static void parse_command_line(char *line, struct command_context *ctx) {
         return;
     }
     
-    // Buffer to accumulate a complete token
     char token_buffer[MAX_COMMAND_LENGTH] = {0};
     int buffer_pos = 0;
     
     char *p = line;
-    // '\0' = not in quotes, '\'' = single, '"' = double
-    char quote_type = '\0'; 
+    char quote_type = '\0';
     
     while (*p != '\0') {
         // Handle backslash OUTSIDE quotes
         if (*p == '\\' && quote_type == '\0') {
-            p++;  // Skip the backslash
+            p++;
             if (*p != '\0') {
                 token_buffer[buffer_pos++] = *p;
                 p++;
@@ -263,12 +156,11 @@ static void parse_command_line(char *line, struct command_context *ctx) {
         if (*p == '\\' && quote_type == '"') {
             if (*(p + 1) == '"' || *(p + 1) == '\\' || 
                 *(p + 1) == '$' || *(p + 1) == '`') {
-                p++;  // Skip the backslash
+                p++;
                 token_buffer[buffer_pos++] = *p;
                 p++;
                 continue;
             }
-            // For other characters, backslash is literal - fall through
         }
         
         // Handle quote characters
@@ -313,11 +205,33 @@ static void parse_command_line(char *line, struct command_context *ctx) {
         ctx->argv[count++] = strdup(token_buffer);
     }
     
+    // Process redirect operators
+    // Look for > or 1> in the token list
+    int final_argc = 0;
+    for (int i = 0; i < count; i++) {
+        if (strcmp(ctx->argv[i], ">") == 0 || strcmp(ctx->argv[i], "1>") == 0) {
+            // Found redirect operator
+            if (i + 1 < count) {
+                ctx->redirect = true;
+                ctx->out_file = strdup(ctx->argv[i + 1]);
+                // Free the ">" token
+                free(ctx->argv[i]);    
+                // Free the filename (we copied it) 
+                free(ctx->argv[i + 1]);  
+                // Skip the filename
+                i++;  
+            }
+        } else {
+            // Keep this token in argv
+            ctx->argv[final_argc++] = ctx->argv[i];
+        }
+    }
+    
     // First token is the command name
-    if (count > 0) {
+    if (final_argc > 0) {
         ctx->command_name = ctx->argv[0];
-        ctx->argc = count;
-        ctx->argv[count] = NULL;
+        ctx->argc = final_argc;
+        ctx->argv[final_argc] = NULL;
     } else {
         ctx->command_name = NULL;
         ctx->argc = 0;
@@ -352,10 +266,26 @@ static void shell_exit(struct command_context *ctx) {
 }
 
 static void shell_echo(struct command_context *ctx) {
-    for (int i = 1; i < ctx->argc; i++) {
-        fprintf(stdout, "%s ", ctx->argv[i]);
+    FILE *output = stdout;
+    
+    // If redirecting, open the file
+    if (ctx->redirect && ctx->out_file) {
+        output = fopen(ctx->out_file, "w");
+        if (!output) {
+            fprintf(stderr, "echo: %s: cannot create file\n", ctx->out_file);
+            return;
+        }
     }
-    fprintf(stdout, "\n");
+    
+    for (int i = 1; i < ctx->argc; i++) {
+        fprintf(output, "%s ", ctx->argv[i]);
+    }
+    fprintf(output, "\n");
+    
+    // Close file if we opened it
+    if (output != stdout) {
+        fclose(output);
+    }
 }
 
 static void shell_type(struct command_context *ctx) {
@@ -469,11 +399,24 @@ static void shell_exec(struct command_context *ctx) {
     }
 
     if (pid == 0) {
+        // CHILD PROCESS: Handle output redirection
+        if (ctx->redirect && ctx->out_file) {
+            int fd = open(ctx->out_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            if (fd < 0) {
+                fprintf(stderr, "%s: cannot create file\n", ctx->out_file);
+                exit(1);
+            }
+            // Redirect stdout (fd 1) to the file
+            dup2(fd, STDOUT_FILENO);
+            close(fd);
+        }
+        
         execv(executable_path, ctx->argv);
         fprintf(stderr, "[shell exec] error in execv\n");
         exit(1);
     }
 
+    // PARENT PROCESS
     int status;
     waitpid(pid, &status, 0);
     free(executable_path);
@@ -486,15 +429,26 @@ static void shell_pwd(struct command_context *ctx) {
     }
 
     char current_directory[MAX_PATH_LENGTH];
-    char *cwd;
-
-    cwd = getcwd(current_directory, sizeof(current_directory));
+    char *cwd = getcwd(current_directory, sizeof(current_directory));
     if (cwd == NULL) {
         fprintf(stderr, "[shell pwd] failed to getcwd\n");
         return;
-    } 
-
-    fprintf(stdout, "%s\n", current_directory);
+    }
+    
+    FILE *output = stdout;
+    if (ctx->redirect && ctx->out_file) {
+        output = fopen(ctx->out_file, "w");
+        if (!output) {
+            fprintf(stderr, "pwd: %s: cannot create file\n", ctx->out_file);
+            return;
+        }
+    }
+    
+    fprintf(output, "%s\n", current_directory);
+    
+    if (output != stdout) {
+        fclose(output);
+    }
 }
 
 static void shell_cd(struct command_context *ctx) {

@@ -21,6 +21,8 @@
 struct command_context {
 	bool redirect;
 	char *out_file;
+    bool redirect_err;
+    char *error_file;
 	char *command_name;
     int argc;
     char **argv;
@@ -73,6 +75,8 @@ int main(void) {
         struct command_context ctx = {
             .redirect = false,
             .out_file = NULL,
+            .redirect_err = false,
+            .error_file = NULL,
             .command_name = NULL,
             .argc = 0,
             .argv = NULL,
@@ -109,6 +113,10 @@ int main(void) {
 
         if (ctx.out_file) {
             free(ctx.out_file);
+        }
+
+        if (ctx.error_file) {
+            free(ctx.error_file);
         }
     }
 
@@ -210,12 +218,24 @@ static void parse_command_line(char *line, struct command_context *ctx) {
     int final_argc = 0;
     for (int i = 0; i < count; i++) {
         if (strcmp(ctx->argv[i], ">") == 0 || strcmp(ctx->argv[i], "1>") == 0) {
-            // Found redirect operator
+            // Found stdout redirect operator
             if (i + 1 < count) {
                 ctx->redirect = true;
                 ctx->out_file = strdup(ctx->argv[i + 1]);
                 // Free the ">" token
-                free(ctx->argv[i]);    
+                free(ctx->argv[i]);      
+                // Free the filename (we copied it)
+                free(ctx->argv[i + 1]); 
+                // Skip the filename
+                i++;  
+            }
+        } else if (strcmp(ctx->argv[i], "2>") == 0) {
+            // Found stderr redirect operator
+            if (i + 1 < count) {
+                ctx->redirect_err = true;
+                ctx->error_file = strdup(ctx->argv[i + 1]);
+                // Free the "2>" token
+                free(ctx->argv[i]);     
                 // Free the filename (we copied it) 
                 free(ctx->argv[i + 1]);  
                 // Skip the filename
@@ -268,7 +288,7 @@ static void shell_exit(struct command_context *ctx) {
 static void shell_echo(struct command_context *ctx) {
     FILE *output = stdout;
     
-    // If redirecting, open the file
+    // Handle stdout redirection
     if (ctx->redirect && ctx->out_file) {
         output = fopen(ctx->out_file, "w");
         if (!output) {
@@ -277,12 +297,19 @@ static void shell_echo(struct command_context *ctx) {
         }
     }
     
+    // Handle stderr redirection (create file even if we don't write to it)
+    if (ctx->redirect_err && ctx->error_file) {
+        FILE *err_file = fopen(ctx->error_file, "w");
+        if (err_file) {
+            fclose(err_file);  // Just create it, don't use it
+        }
+    }
+    
     for (int i = 1; i < ctx->argc; i++) {
         fprintf(output, "%s ", ctx->argv[i]);
     }
     fprintf(output, "\n");
     
-    // Close file if we opened it
     if (output != stdout) {
         fclose(output);
     }
@@ -410,6 +437,17 @@ static void shell_exec(struct command_context *ctx) {
             dup2(fd, STDOUT_FILENO);
             close(fd);
         }
+
+        if (ctx->redirect_err && ctx->error_file) {
+            int fd = open(ctx->error_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            if (fd < 0) {
+                fprintf(stderr, "%s: cannot create file\n", ctx->error_file);
+                exit(1);
+            }
+            // Redirect stderr (fd 2) to the file
+            dup2(fd, STDERR_FILENO);
+            close(fd);
+        }
         
         execv(executable_path, ctx->argv);
         fprintf(stderr, "[shell exec] error in execv\n");
@@ -441,6 +479,14 @@ static void shell_pwd(struct command_context *ctx) {
         if (!output) {
             fprintf(stderr, "pwd: %s: cannot create file\n", ctx->out_file);
             return;
+        }
+    }
+    
+    // Handle stderr redirection (create file even if we don't write to it)
+    if (ctx->redirect_err && ctx->error_file) {
+        FILE *err_file = fopen(ctx->error_file, "w");
+        if (err_file) {
+            fclose(err_file);
         }
     }
     

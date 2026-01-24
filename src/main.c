@@ -123,8 +123,7 @@ static void split_command(char *line, char **cmd, char **args) {
 }
 
 static void populate_argv(struct command_context *ctx, char *args) {
-    int count = 1;
-    int capacity = ARGV_MAX_CAPACITY;
+    int count = 1, capacity = ARGV_MAX_CAPACITY;
     ctx->argv = malloc(capacity * sizeof(char *));
     ctx->argv[0] = strdup(ctx->command_name);
     
@@ -140,10 +139,21 @@ static void populate_argv(struct command_context *ctx, char *args) {
     
     char *p = args;
     // '\0' = not in quotes, '\'' = single, '"' = double
-    char quote_type = '\0';  
+    char quote_type = '\0'; 
     
     while (*p != '\0') {
-        // Handle quote characters
+        // Handle backslash OUTSIDE quotes
+        if (*p == '\\' && quote_type == '\0') {
+            p++;  // Skip the backslash
+            if (*p != '\0') {
+                // Add the next character literally (even if it's special)
+                token_buffer[buffer_pos++] = *p;
+                p++;
+            }
+            continue;
+        }
+        
+        // Handle quote characters (only if not escaped)
         if ((*p == '\'' || *p == '"') && quote_type == '\0') {
             // Start of quoted section
             quote_type = *p;
@@ -174,7 +184,6 @@ static void populate_argv(struct command_context *ctx, char *args) {
         }
         
         // Regular character - accumulate it
-        // (inside quotes or outside, doesn't matter)
         token_buffer[buffer_pos++] = *p;
         p++;
     }

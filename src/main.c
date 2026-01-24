@@ -144,13 +144,29 @@ static void populate_argv(struct command_context *ctx, char *args) {
     while (*p != '\0') {
         // Handle backslash OUTSIDE quotes
         if (*p == '\\' && quote_type == '\0') {
-            p++;  // Skip the backslash
+            // Skip the backslash
+            p++;  
             if (*p != '\0') {
                 // Add the next character literally (even if it's special)
                 token_buffer[buffer_pos++] = *p;
                 p++;
             }
             continue;
+        }
+
+        // Handle backslash INSIDE DOUBLE QUOTES
+        if (*p == '\\' && quote_type == '"') {
+            // Peek at next character
+            if (*(p + 1) == '"' || *(p + 1) == '\\' || 
+                *(p + 1) == '$' || *(p + 1) == '`') {
+                // These are escapable in double quotes
+                p++;  // Skip the backslash
+                token_buffer[buffer_pos++] = *p;  // Add the escaped char
+                p++;
+                continue;
+            }
+            // For other characters, backslash is literal
+            // Fall through to add both backslash and next char
         }
         
         // Handle quote characters (only if not escaped)

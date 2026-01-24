@@ -36,6 +36,7 @@ struct command {
 static void trim_newline(char *s);
 static void split_command(char *line, char **cmd, char **args);
 static void populate_argv(struct command_context *ctx, char *cmd);
+static void parse_command_line(char *line, struct command_context *ctx);
 static void debug_print_context(struct command_context *ctx);
 static void shell_exit(struct command_context *ctx);
 static void shell_echo(struct command_context *ctx);
@@ -70,25 +71,26 @@ int main(void) {
 
         trim_newline(line);
 
-        char *cmd;
-        char *args;
-        split_command(line, &cmd, &args);
-
         struct command_context ctx = {
             .redirect = false,
             .out_file = NULL,
-            .command_name = cmd,
+            .command_name = NULL,
             .argc = 0,
             .argv = NULL,
         };
 
-        populate_argv(&ctx, args);
+        parse_command_line(line, &ctx);
+
+        // Skip empty commands
+        if (ctx.command_name == NULL || ctx.argc == 0) {
+            continue;
+        }
 
         // debug_print_context(&ctx);
 
         bool found = false;
         for (size_t i = 0; i < NUM_COMMANDS; i++) {
-            if (strcmp(cmd, commands[i].name) == 0) {
+            if (strcmp(ctx.command_name, commands[i].name) == 0) {  // ← USE ctx.command_name
                 commands[i].func(&ctx);
                 found = true;
                 break;
@@ -99,7 +101,15 @@ int main(void) {
         if (!found) {
             shell_exec(&ctx);
         }
+
+        // Free allocated memory
+        for (int i = 0; i < ctx.argc; i++) {
+            free(ctx.argv[i]);
+        }
+        free(ctx.argv);
     }
+
+    return 0;
 }
 
 /* FUNCTION FUNCTIONS, LIKE THE REAL THINGS THAT DO THE WORK */
@@ -216,6 +226,103 @@ static void populate_argv(struct command_context *ctx, char *args) {
     
     ctx->argv[count] = NULL;
     ctx->argc = count;
+}
+
+static void parse_command_line(char *line, struct command_context *ctx) {
+    int count = 0;
+    int capacity = ARGV_MAX_CAPACITY;
+    ctx->argv = malloc(capacity * sizeof(char *));
+    
+    if (strlen(line) == 0) {
+        ctx->command_name = NULL;
+        ctx->argv[0] = NULL;
+        ctx->argc = 0;
+        return;
+    }
+    
+    // Buffer to accumulate a complete token
+    char token_buffer[MAX_COMMAND_LENGTH] = {0};
+    int buffer_pos = 0;
+    
+    char *p = line;
+    // '\0' = not in quotes, '\'' = single, '"' = double
+    char quote_type = '\0'; 
+    
+    while (*p != '\0') {
+        // Handle backslash OUTSIDE quotes
+        if (*p == '\\' && quote_type == '\0') {
+            p++;  // Skip the backslash
+            if (*p != '\0') {
+                token_buffer[buffer_pos++] = *p;
+                p++;
+            }
+            continue;
+        }
+        
+        // Handle backslash INSIDE DOUBLE QUOTES
+        if (*p == '\\' && quote_type == '"') {
+            if (*(p + 1) == '"' || *(p + 1) == '\\' || 
+                *(p + 1) == '$' || *(p + 1) == '`') {
+                p++;  // Skip the backslash
+                token_buffer[buffer_pos++] = *p;
+                p++;
+                continue;
+            }
+            // For other characters, backslash is literal - fall through
+        }
+        
+        // Handle quote characters
+        if ((*p == '\'' || *p == '"') && quote_type == '\0') {
+            quote_type = *p;
+            p++;
+            continue;
+        }
+        else if (*p == quote_type && quote_type != '\0') {
+            quote_type = '\0';
+            p++;
+            continue;
+        }
+        
+        // Handle spaces
+        if (*p == ' ' && quote_type == '\0') {
+            if (buffer_pos > 0) {
+                token_buffer[buffer_pos] = '\0';
+                if (count >= capacity) {
+                    capacity *= 2;
+                    ctx->argv = realloc(ctx->argv, capacity * sizeof(char *));
+                }
+                ctx->argv[count++] = strdup(token_buffer);
+                buffer_pos = 0;
+            }
+            p++;
+            continue;
+        }
+        
+        // Regular character - accumulate it
+        token_buffer[buffer_pos++] = *p;
+        p++;
+    }
+    
+    // Save last token if exists
+    if (buffer_pos > 0) {
+        token_buffer[buffer_pos] = '\0';
+        if (count >= capacity) {
+            capacity *= 2;
+            ctx->argv = realloc(ctx->argv, capacity * sizeof(char *));
+        }
+        ctx->argv[count++] = strdup(token_buffer);
+    }
+    
+    // First token is the command name
+    if (count > 0) {
+        ctx->command_name = ctx->argv[0];
+        ctx->argc = count;
+        ctx->argv[count] = NULL;
+    } else {
+        ctx->command_name = NULL;
+        ctx->argc = 0;
+        ctx->argv[0] = NULL;
+    }
 }
 
 static void debug_print_context(struct command_context *ctx) {

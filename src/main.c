@@ -30,6 +30,10 @@ struct command_context {
 	char *command_name;
     int argc;
     char **argv;
+    bool has_pipe;
+    char *pipe_command_name;
+    int pipe_argc;
+    char **pipe_argv;
 };
 
 typedef void (*command_function)(struct command_context *);
@@ -53,6 +57,8 @@ static char *command_generator(const char *text, int state);
 static char **command_completion(const char *text, int start, int end);
 static bool is_executable(const char *path);
 static char *path_executable_generator(const char *text, int state);
+static void shell_exec_pipeline(struct command_context *ctx);
+static char *find_executable_in_path(const char *command_name);
 
 /* OTHER HELPERS TO MAKE LIFE EASIER */
 struct command commands[] = {
@@ -107,28 +113,38 @@ int main(void) {
             .command_name = NULL,
             .argc = 0,
             .argv = NULL,
+            .has_pipe = false,
+            .pipe_command_name = NULL,
+            .pipe_argc = 0,
+            .pipe_argv = NULL,
         };
 
         parse_command_line(line, &ctx);
 
-        // Skip empty commands after parsing
+        // Skip empty commands
         if (ctx.command_name == NULL || ctx.argc == 0) {
             free(line);
             continue;
         }
 
-        bool found = false;
-        for (size_t i = 0; i < NUM_COMMANDS; i++) {
-            if (strcmp(ctx.command_name, commands[i].name) == 0) {
-                commands[i].func(&ctx);
-                found = true;
-                break;
+        // Check if it's a pipeline
+        if (ctx.has_pipe) {
+            // Execute pipeline (only for external commands)
+            shell_exec_pipeline(&ctx);
+        } else {
+            // Normal command execution (your existing code)
+            bool found = false;
+            for (size_t i = 0; i < NUM_COMMANDS; i++) {
+                if (strcmp(ctx.command_name, commands[i].name) == 0) {
+                    commands[i].func(&ctx);
+                    found = true;
+                    break;
+                }
             }
-        }
-
-        // If not a builtin, try to execute it as an external program
-        if (!found) {
-            shell_exec(&ctx);
+            
+            if (!found) {
+                shell_exec(&ctx);
+            }
         }
 
         // Free allocated memory
@@ -282,6 +298,49 @@ static void parse_command_line(char *line, struct command_context *ctx) {
             }
         } else {
             ctx->argv[final_argc++] = ctx->argv[i];
+        }
+    }
+
+    // Inside parse_command_line(), after processing redirects:
+
+// Check for pipe operator
+int pipe_position = -1;
+for (int i = 0; i < final_argc; i++) {
+    if (strcmp(ctx->argv[i], "|") == 0) {
+        pipe_position = i;
+        break;
+    }
+}
+
+    if (pipe_position != -1) {
+        ctx->has_pipe = true;
+        
+        // First command: everything before the pipe
+        ctx->command_name = ctx->argv[0];
+        ctx->argc = pipe_position;
+        ctx->argv[pipe_position] = NULL;  // Terminate first command's argv
+        
+        // Second command: everything after the pipe
+        if (pipe_position + 1 < final_argc) {
+            ctx->pipe_command_name = ctx->argv[pipe_position + 1];
+            ctx->pipe_argc = final_argc - pipe_position - 1;
+            ctx->pipe_argv = &ctx->argv[pipe_position + 1];
+            ctx->pipe_argv[ctx->pipe_argc] = NULL;  // Terminate second command's argv
+        }
+        
+        // Free the pipe operator string
+        free(ctx->argv[pipe_position]);
+    } else {
+        // No pipe - normal command
+        ctx->has_pipe = false;
+        if (final_argc > 0) {
+            ctx->command_name = ctx->argv[0];
+            ctx->argc = final_argc;
+            ctx->argv[final_argc] = NULL;
+        } else {
+            ctx->command_name = NULL;
+            ctx->argc = 0;
+            ctx->argv[0] = NULL;
         }
     }
     
@@ -706,4 +765,137 @@ static char *path_executable_generator(const char *text, int state) {
     }
 
     return NULL;
+}
+
+static void shell_exec_pipeline(struct command_context *ctx) {
+    // Find both executables in PATH
+    char *exec1_path = find_executable_in_path(ctx->command_name);
+    char *exec2_path = find_executable_in_path(ctx->pipe_command_name);
+    
+    if (!exec1_path) {
+        fprintf(stdout, "%s: command not found\n", ctx->command_name);
+        return;
+    }
+    
+    if (!exec2_path) {
+        fprintf(stdout, "%s: command not found\n", ctx->pipe_command_name);
+        free(exec1_path);
+        return;
+    }
+    
+    // Create the pipe
+    int pipe_fd[2];
+    if (pipe(pipe_fd) == -1) {
+        fprintf(stderr, "pipe: failed to create pipe\n");
+        free(exec1_path);
+        free(exec2_path);
+        return;
+    }
+    
+    // Fork first child (first command)
+    pid_t pid1 = fork();
+    if (pid1 == -1) {
+        fprintf(stderr, "fork: failed\n");
+        close(pipe_fd[0]);
+        close(pipe_fd[1]);
+        free(exec1_path);
+        free(exec2_path);
+        return;
+    }
+    
+    if (pid1 == 0) {
+        // FIRST CHILD PROCESS
+        // Close read end (we only write)
+        close(pipe_fd[0]);
+        
+        // Redirect stdout to pipe write end
+        dup2(pipe_fd[1], STDOUT_FILENO);
+        close(pipe_fd[1]);
+        
+        // Execute first command
+        execv(exec1_path, ctx->argv);
+        fprintf(stderr, "execv: failed to execute %s\n", ctx->command_name);
+        exit(1);
+    }
+    
+    // Fork second child (second command)
+    pid_t pid2 = fork();
+    if (pid2 == -1) {
+        fprintf(stderr, "fork: failed\n");
+        close(pipe_fd[0]);
+        close(pipe_fd[1]);
+        free(exec1_path);
+        free(exec2_path);
+        return;
+    }
+    
+    if (pid2 == 0) {
+        // SECOND CHILD PROCESS
+        // Close write end (we only read)
+        close(pipe_fd[1]);
+        
+        // Redirect stdin to pipe read end
+        dup2(pipe_fd[0], STDIN_FILENO);
+        close(pipe_fd[0]);
+        
+        // Execute second command
+        execv(exec2_path, ctx->pipe_argv);
+        fprintf(stderr, "execv: failed to execute %s\n", ctx->pipe_command_name);
+        exit(1);
+    }
+    
+    // PARENT PROCESS
+    // Close both pipe ends (children have their copies)
+    close(pipe_fd[0]);
+    close(pipe_fd[1]);
+    
+    // Wait for both children
+    waitpid(pid1, NULL, 0);
+    waitpid(pid2, NULL, 0);
+    
+    free(exec1_path);
+    free(exec2_path);
+}
+
+// Helper to find executable in PATH
+static char *find_executable_in_path(const char *command_name) {
+    char *path_env = getenv("PATH");
+    if (!path_env) {
+        return NULL;
+    }
+    
+    char *path_copy = strdup(path_env);
+    char *token = strtok(path_copy, ":");
+    char *executable_path = NULL;
+    
+    while (token) {
+        DIR *dir = opendir(token);
+        if (dir) {
+            struct dirent *entry;
+            while ((entry = readdir(dir)) != NULL) {
+                if (strcmp(entry->d_name, command_name) == 0) {
+                    char full_path[MAX_PATH_LENGTH];
+                    snprintf(full_path, sizeof(full_path), "%s/%s", 
+                            token, entry->d_name);
+                    
+                    if (access(full_path, X_OK) == 0) {
+                        struct stat path_stat;
+                        stat(full_path, &path_stat);
+                        if (S_ISREG(path_stat.st_mode)) {
+                            executable_path = strdup(full_path);
+                            break;
+                        }
+                    }
+                }
+            }
+            closedir(dir);
+        }
+        if (executable_path) {
+            break;
+        }
+        token = strtok(NULL, ":");
+    }
+    
+    free(path_copy);
+    return executable_path;
 }

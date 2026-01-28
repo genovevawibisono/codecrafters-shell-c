@@ -63,6 +63,7 @@ static bool is_builtin(const char *command_name);
 static command_function get_builtin_function(const char *command_name);
 static void execute_builtin_in_fork(const char *command_name, char **argv, int argc, 
                                    int stdin_fd, int stdout_fd);
+static void shell_history(struct command_context *ctx);
 
 /* OTHER HELPERS TO MAKE LIFE EASIER */
 struct command commands[] = {
@@ -71,6 +72,7 @@ struct command commands[] = {
 	{ "type", shell_type },
     { "pwd", shell_pwd }, 
     { "cd", shell_cd },
+    { "history", shell_history },
 };
 
 #define NUM_COMMANDS (sizeof(commands) / sizeof(commands[0]))
@@ -78,6 +80,10 @@ struct command commands[] = {
 char *command_names[] = {
     "exit",
     "echo",
+    "type",
+    "pwd",
+    "cd",
+    "history",
     NULL,
 };
 
@@ -1049,4 +1055,25 @@ static void execute_builtin_in_fork(const char *command_name, char **argv, int a
     
     func(&temp_ctx);
     exit(0);
+}
+
+static void shell_history(struct command_context *ctx) {
+    (void)ctx; 
+    
+    // Get the history list from readline
+    HIST_ENTRY **list = history_list();
+    
+    // No history yet
+    if (!list) {
+        return;  
+    }
+    
+    // Print each history entry
+    // history_base is the starting index (usually 1)
+    // history_length is the number of entries
+    for (int i = 0; i < history_length; i++) {
+        if (list[i]) {
+            printf("%5d  %s\n", i + history_base, list[i]->line);
+        }
+    }
 }

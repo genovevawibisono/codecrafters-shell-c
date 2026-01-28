@@ -51,6 +51,8 @@ static void shell_pwd(struct command_context *ctx);
 static void shell_cd(struct command_context *ctx);
 static char *command_generator(const char *text, int state);
 static char **command_completion(const char *text, int start, int end);
+static bool is_executable(const char *path);
+static char *path_executable_generator(const char *text, int state);
 
 /* OTHER HELPERS TO MAKE LIFE EASIER */
 struct command commands[] = {
@@ -565,26 +567,31 @@ static void shell_cd(struct command_context *ctx) {
 }
 
 static char *command_generator(const char *text, int state) {
-    if (text == NULL) {
-        fprintf(stderr, "[command generator] text is NULL\n");
-        return NULL;
-    }
-
-    static int list_idx, len;
-    char *name;
-
+    static int list_idx;
+    static int text_len;
+    static bool checking_builtins;
+    
+    // First call - initialize
     if (!state) {
         list_idx = 0;
-        len = strlen(text);
+        text_len = strlen(text);
+        checking_builtins = true;
     }
-
-    while ((name = command_names[list_idx++])) {
-        if (strncmp(name, text, len) == 0) {
-            return strdup(name);
+    
+    // First check builtins
+    if (checking_builtins) {
+        while (command_names[list_idx]) {
+            char *name = command_names[list_idx++];
+            if (strncmp(name, text, text_len) == 0) {
+                return strdup(name);
+            }
         }
+        // Done with builtins, now check PATH
+        checking_builtins = false;
     }
-
-    return NULL;
+    
+    // Now check PATH executables
+    return path_executable_generator(text, state);
 }
 
 static char **command_completion(const char *text, int start, int end) {
@@ -595,6 +602,107 @@ static char **command_completion(const char *text, int start, int end) {
 
     if (start == 0) {
         return rl_completion_matches(text, command_generator);
+    }
+
+    return NULL;
+}
+
+static bool is_executable(const char *path) {
+    if (path == NULL) {
+        fprintf(stderr, "path is NULL\n");
+        return false;
+    }
+
+    struct stat st;
+    if (stat(path, &st) == -1) {
+        return false;
+    }
+
+    return S_ISREG(st.st_mode) && (st.st_mode & S_IXUSR);
+}
+
+static char *path_executable_generator(const char *text, int state) {
+    if (text == NULL) {
+        fprintf(stderr, "[path executable generator] text is NULL\n");
+        return NULL;
+    }
+
+    static char **executable_list = NULL;
+    static int list_idx, text_len;
+
+    if (!state) {
+        list_idx = 0;
+        text_len = strlen(text);
+
+        if (executable_list) {
+            for (int i = 0; executable_list[i]; i++) {
+                free(executable_list[i]);
+            }
+            free(executable_list);
+            executable_list = NULL;
+        }
+
+        char *path_env = getenv("PATH");
+        if (path_env == NULL) {
+            fprintf(stderr, "[path executable generator] path env is NULL\n");
+            return NULL;
+        }
+
+        int capacity = 1024, count = 0;
+        executable_list = malloc(capacity * sizeof(char *));
+        if (executable_list == NULL) {
+            fprintf(stderr, "[path executable generator] failed to malloc for executable list\n");
+            return NULL;
+        }
+
+        char *path_copy = strdup(path_env);
+        char *token = strtok(path_copy, ":");
+        
+        while (token) {
+            DIR *dir = opendir(token);
+            if (dir) {
+                struct dirent *entry;
+                while ((entry = readdir(dir)) != NULL) {
+                    // Skip . and ..
+                    if (strcmp(entry->d_name, ".") == 0 || 
+                        strcmp(entry->d_name, "..") == 0) {
+                        continue;
+                    }
+                    
+                    // Build full path
+                    char full_path[MAX_PATH_LENGTH];
+                    snprintf(full_path, sizeof(full_path), "%s/%s", 
+                            token, entry->d_name);
+                    
+                    // Check if executable
+                    if (is_executable(full_path)) {
+                        // Check if we need to grow the list
+                        if (count >= capacity - 1) {
+                            capacity *= 2;
+                            executable_list = realloc(executable_list, 
+                                                     capacity * sizeof(char *));
+                        }
+                        
+                        // Add to list (no duplicates check for simplicity)
+                        executable_list[count++] = strdup(entry->d_name);
+                    }
+                }
+                closedir(dir);
+            }
+            token = strtok(NULL, ":");
+        }
+        
+        free(path_copy);
+        executable_list[count] = NULL;
+    }
+
+    if (executable_list) {
+        while (executable_list[list_idx]) {
+            char *name = executable_list[list_idx++];
+            if (strncmp(name, text, text_len) == 0) {
+                return strdup(name);
+            }
+        }
     }
 
     return NULL;

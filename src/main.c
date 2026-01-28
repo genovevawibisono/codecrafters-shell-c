@@ -30,10 +30,10 @@ struct command_context {
 	char *command_name;
     int argc;
     char **argv;
-    bool has_pipe;
-    char *pipe_command_name;
-    int pipe_argc;
-    char **pipe_argv;
+    int num_commands;
+    char ***all_commands;
+    int *all_argc;
+    char **all_command_names;
 };
 
 typedef void (*command_function)(struct command_context *);
@@ -117,10 +117,10 @@ int main(void) {
             .command_name = NULL,
             .argc = 0,
             .argv = NULL,
-            .has_pipe = false,
-            .pipe_command_name = NULL,
-            .pipe_argc = 0,
-            .pipe_argv = NULL,
+            .num_commands = 0,
+            .all_argc = NULL,
+            .all_commands = NULL,
+            .all_command_names = NULL,
         };
 
         parse_command_line(line, &ctx);
@@ -133,12 +133,17 @@ int main(void) {
 
         // debug_print_context(&ctx);
 
+        if (ctx.num_commands == 0 && (ctx.command_name == NULL || ctx.argc == 0)) {
+            free(line);
+            continue;
+        }
+
         // Check if it's a pipeline
-        if (ctx.has_pipe) {
-            // Execute pipeline (only for external commands)
+        if (ctx.num_commands > 0) {
+            // Execute pipeline (works for 2, 3, 4... any number)
             shell_exec_pipeline(&ctx);
         } else {
-            // Normal command execution (your existing code)
+            // Single command execution
             bool found = false;
             for (size_t i = 0; i < NUM_COMMANDS; i++) {
                 if (strcmp(ctx.command_name, commands[i].name) == 0) {
@@ -154,22 +159,19 @@ int main(void) {
         }
 
         // Free allocated memory
-        if (ctx.has_pipe) {
-            // Free first command argv (up to pipe position)
-            for (int i = 0; i < ctx.argc; i++) {
-                if (ctx.argv[i]) free(ctx.argv[i]);
+        if (ctx.num_commands > 0) {
+            // Pipeline
+            for (int i = 0; i < ctx.num_commands; i++) {
+                for (int j = 0; j < ctx.all_argc[i]; j++) {
+                    free(ctx.all_commands[i][j]);
+                }
+                free(ctx.all_commands[i]);
             }
-            // Free the pipe operator if it wasn't freed already
-            if (ctx.argv[ctx.argc]) {
-                free(ctx.argv[ctx.argc]);
-            }
-            // Free second command argv
-            for (int i = 0; i < ctx.pipe_argc; i++) {
-                if (ctx.pipe_argv[i]) free(ctx.pipe_argv[i]);
-            }
-            free(ctx.pipe_argv);
+            free(ctx.all_commands);
+            free(ctx.all_argc);
+            free(ctx.all_command_names);
         } else {
-            // Normal free
+            // Single command
             for (int i = 0; i < ctx.argc; i++) {
                 if (ctx.argv[i]) free(ctx.argv[i]);
             }
@@ -207,7 +209,7 @@ static void parse_command_line(char *line, struct command_context *ctx) {
         ctx->command_name = NULL;
         ctx->argv[0] = NULL;
         ctx->argc = 0;
-        ctx->has_pipe = false;
+        ctx->num_commands = 0;
         return;
     }
     
@@ -282,43 +284,60 @@ static void parse_command_line(char *line, struct command_context *ctx) {
         ctx->argv[count++] = strdup(token_buffer);
     }
     
-    // === CHECK FOR PIPE FIRST ===
-    int pipe_position = -1;
+    // === CHECK FOR PIPES ===
+    int num_pipes = 0;
     for (int i = 0; i < count; i++) {
         if (strcmp(ctx->argv[i], "|") == 0) {
-            pipe_position = i;
-            break;
+            num_pipes++;
         }
     }
     
-    if (pipe_position != -1) {
-        // We have a pipe!
-        ctx->has_pipe = true;
+    if (num_pipes > 0) {
+        // Pipeline detected
+        ctx->num_commands = num_pipes + 1;
         
-        // First command: everything before pipe
-        ctx->command_name = ctx->argv[0];
-        ctx->argc = pipe_position;
+        // Allocate arrays
+        ctx->all_commands = malloc(ctx->num_commands * sizeof(char **));
+        ctx->all_argc = malloc(ctx->num_commands * sizeof(int));
+        ctx->all_command_names = malloc(ctx->num_commands * sizeof(char *));
         
-        // Create new argv array for second command
-        ctx->pipe_argc = count - pipe_position - 1;
-        ctx->pipe_argv = malloc((ctx->pipe_argc + 1) * sizeof(char *));
+        // Split into commands
+        int cmd_idx = 0;
+        int cmd_start = 0;
         
-        for (int i = 0; i < ctx->pipe_argc; i++) {
-            ctx->pipe_argv[i] = ctx->argv[pipe_position + 1 + i];
+        for (int i = 0; i <= count; i++) {
+            if (i == count || strcmp(ctx->argv[i], "|") == 0) {
+                // End of a command
+                int cmd_argc = i - cmd_start;
+                
+                ctx->all_commands[cmd_idx] = malloc((cmd_argc + 1) * sizeof(char *));
+                for (int j = 0; j < cmd_argc; j++) {
+                    ctx->all_commands[cmd_idx][j] = ctx->argv[cmd_start + j];
+                }
+                ctx->all_commands[cmd_idx][cmd_argc] = NULL;
+                
+                ctx->all_argc[cmd_idx] = cmd_argc;
+                ctx->all_command_names[cmd_idx] = ctx->all_commands[cmd_idx][0];
+                
+                cmd_idx++;
+                
+                if (i < count) {
+                    free(ctx->argv[i]); // Free pipe symbol
+                }
+                
+                cmd_start = i + 1;
+            }
         }
-        ctx->pipe_argv[ctx->pipe_argc] = NULL;
-        ctx->pipe_command_name = ctx->pipe_argv[0];
         
-        // Null-terminate first command's argv
-        ctx->argv[pipe_position] = NULL;
-        
-        // Don't free the pipe symbol here - we'll handle it later
+        // Set legacy single-command fields (for debug or compatibility)
+        ctx->command_name = ctx->all_command_names[0];
+        ctx->argc = ctx->all_argc[0];
         
         return;
     }
     
-    // === NO PIPE, PROCESS REDIRECTS ===
-    ctx->has_pipe = false;
+    // === NO PIPES - SINGLE COMMAND ===
+    ctx->num_commands = 0;
     
     // Process redirect operators
     int final_argc = 0;
@@ -364,7 +383,7 @@ static void parse_command_line(char *line, struct command_context *ctx) {
         }
     }
     
-    // First token is the command name
+    // Set command info
     if (final_argc > 0) {
         ctx->command_name = ctx->argv[0];
         ctx->argc = final_argc;
@@ -792,108 +811,140 @@ static char *path_executable_generator(const char *text, int state) {
 }
 
 static void shell_exec_pipeline(struct command_context *ctx) {
-    // Check if commands are builtins or need PATH lookup
-    bool cmd1_is_builtin = is_builtin(ctx->command_name);
-    bool cmd2_is_builtin = is_builtin(ctx->pipe_command_name);
+    int n = ctx->num_commands;
     
-    char *exec1_path = NULL;
-    char *exec2_path = NULL;
+    // Check which commands are builtins and find executables
+    bool *is_builtin_arr = malloc(n * sizeof(bool));
+    char **exec_paths = malloc(n * sizeof(char *));
     
-    // Find external executables if needed
-    if (!cmd1_is_builtin) {
-        exec1_path = find_executable_in_path(ctx->command_name);
-        if (!exec1_path) {
-            fprintf(stdout, "%s: command not found\n", ctx->command_name);
+    for (int i = 0; i < n; i++) {
+        is_builtin_arr[i] = is_builtin(ctx->all_command_names[i]);
+        
+        if (!is_builtin_arr[i]) {
+            exec_paths[i] = find_executable_in_path(ctx->all_command_names[i]);
+            if (!exec_paths[i]) {
+                fprintf(stdout, "%s: command not found\n", ctx->all_command_names[i]);
+                // Cleanup what we've allocated so far
+                for (int j = 0; j < i; j++) {
+                    if (exec_paths[j]) free(exec_paths[j]);
+                }
+                free(exec_paths);
+                free(is_builtin_arr);
+                return;
+            }
+        } else {
+            exec_paths[i] = NULL;
+        }
+    }
+    
+    // Create pipes (n-1 pipes for n commands)
+    int num_pipes = n - 1;
+    int (*pipes)[2] = malloc(num_pipes * sizeof(int[2]));
+    
+    for (int i = 0; i < num_pipes; i++) {
+        if (pipe(pipes[i]) == -1) {
+            fprintf(stderr, "pipe: failed to create pipe\n");
+            // Close pipes we've already created
+            for (int j = 0; j < i; j++) {
+                close(pipes[j][0]);
+                close(pipes[j][1]);
+            }
+            free(pipes);
+            for (int j = 0; j < n; j++) {
+                if (exec_paths[j]) free(exec_paths[j]);
+            }
+            free(exec_paths);
+            free(is_builtin_arr);
             return;
         }
     }
     
-    if (!cmd2_is_builtin) {
-        exec2_path = find_executable_in_path(ctx->pipe_command_name);
-        if (!exec2_path) {
-            fprintf(stdout, "%s: command not found\n", ctx->pipe_command_name);
-            if (exec1_path) free(exec1_path);
-            return;
-        }
-    }
+    // Fork for each command
+    pid_t *pids = malloc(n * sizeof(pid_t));
     
-    // Create the pipe
-    int pipe_fd[2];
-    if (pipe(pipe_fd) == -1) {
-        fprintf(stderr, "pipe: failed to create pipe\n");
-        if (exec1_path) free(exec1_path);
-        if (exec2_path) free(exec2_path);
-        return;
-    }
-    
-    // Fork first child (first command)
-    pid_t pid1 = fork();
-    if (pid1 == -1) {
-        fprintf(stderr, "fork: failed\n");
-        close(pipe_fd[0]);
-        close(pipe_fd[1]);
-        if (exec1_path) free(exec1_path);
-        if (exec2_path) free(exec2_path);
-        return;
-    }
-    
-    if (pid1 == 0) {
-        // FIRST CHILD PROCESS
-        close(pipe_fd[0]);  // Close read end
+    for (int i = 0; i < n; i++) {
+        pids[i] = fork();
         
-        if (cmd1_is_builtin) {
-            // Execute builtin with stdout redirected to pipe
-            execute_builtin_in_fork(ctx->command_name, ctx->argv, ctx->argc,
-                                   STDIN_FILENO, pipe_fd[1]);
-        } else {
-            // Execute external command
-            dup2(pipe_fd[1], STDOUT_FILENO);
-            close(pipe_fd[1]);
-            execv(exec1_path, ctx->argv);
-            fprintf(stderr, "execv: failed to execute %s\n", ctx->command_name);
+        if (pids[i] == -1) {
+            fprintf(stderr, "fork: failed\n");
             exit(1);
         }
-    }
-    
-    // Fork second child (second command)
-    pid_t pid2 = fork();
-    if (pid2 == -1) {
-        fprintf(stderr, "fork: failed\n");
-        close(pipe_fd[0]);
-        close(pipe_fd[1]);
-        if (exec1_path) free(exec1_path);
-        if (exec2_path) free(exec2_path);
-        return;
-    }
-    
-    if (pid2 == 0) {
-        // SECOND CHILD PROCESS
-        close(pipe_fd[1]);  // Close write end
         
-        if (cmd2_is_builtin) {
-            // Execute builtin with stdin redirected from pipe
-            execute_builtin_in_fork(ctx->pipe_command_name, ctx->pipe_argv, 
-                                   ctx->pipe_argc, pipe_fd[0], STDOUT_FILENO);
-        } else {
-            // Execute external command
-            dup2(pipe_fd[0], STDIN_FILENO);
-            close(pipe_fd[0]);
-            execv(exec2_path, ctx->pipe_argv);
-            fprintf(stderr, "execv: failed to execute %s\n", ctx->pipe_command_name);
-            exit(1);
+        if (pids[i] == 0) {
+            // CHILD PROCESS for command i
+            
+            // Redirect stdin from previous pipe (except first command)
+            if (i > 0) {
+                dup2(pipes[i-1][0], STDIN_FILENO);
+            }
+            
+            // Redirect stdout to next pipe (except last command)
+            if (i < n - 1) {
+                dup2(pipes[i][1], STDOUT_FILENO);
+            }
+            
+            // Close ALL pipe file descriptors in child
+            for (int j = 0; j < num_pipes; j++) {
+                close(pipes[j][0]);
+                close(pipes[j][1]);
+            }
+            
+            // Execute the command
+            if (is_builtin_arr[i]) {
+                // Builtin command
+                command_function func = get_builtin_function(ctx->all_command_names[i]);
+                if (!func) {
+                    fprintf(stderr, "%s: builtin not found\n", ctx->all_command_names[i]);
+                    exit(1);
+                }
+                
+                struct command_context temp_ctx = {
+                    .redirect = false,
+                    .out_file = NULL,
+                    .out_mode = O_TRUNC,
+                    .redirect_err = false,
+                    .error_file = NULL,
+                    .err_mode = O_TRUNC,
+                    .command_name = ctx->all_command_names[i],
+                    .argc = ctx->all_argc[i],
+                    .argv = ctx->all_commands[i],
+                    .num_commands = 0,
+                    .all_commands = NULL,
+                    .all_argc = NULL,
+                    .all_command_names = NULL,
+                };
+                
+                func(&temp_ctx);
+                exit(0);
+            } else {
+                // External command
+                execv(exec_paths[i], ctx->all_commands[i]);
+                fprintf(stderr, "execv: failed to execute %s\n", ctx->all_command_names[i]);
+                exit(1);
+            }
         }
     }
     
     // PARENT PROCESS
-    close(pipe_fd[0]);
-    close(pipe_fd[1]);
+    // Close all pipes in parent
+    for (int i = 0; i < num_pipes; i++) {
+        close(pipes[i][0]);
+        close(pipes[i][1]);
+    }
     
-    // Wait for both children
-    waitpid(pid1, NULL, 0);
-    waitpid(pid2, NULL, 0);
+    // Wait for all children
+    for (int i = 0; i < n; i++) {
+        waitpid(pids[i], NULL, 0);
+    }
     
-    if (exec1_path) free(exec1_path);
-    if (exec2_path) free(exec2_path);
+    // Cleanup
+    free(pipes);
+    free(pids);
+    for (int i = 0; i < n; i++) {
+        if (exec_paths[i]) free(exec_paths[i]);
+    }
+    free(exec_paths);
+    free(is_builtin_arr);
 }
 
 // Helper to find executable in PATH
@@ -961,7 +1012,6 @@ static command_function get_builtin_function(const char *command_name) {
 
 static void execute_builtin_in_fork(const char *command_name, char **argv, int argc, 
                                    int stdin_fd, int stdout_fd) {
-    // Get the builtin function
     command_function func = get_builtin_function(command_name);
     if (!func) {
         fprintf(stderr, "%s: builtin not found\n", command_name);
@@ -991,15 +1041,12 @@ static void execute_builtin_in_fork(const char *command_name, char **argv, int a
         .command_name = (char *)command_name,
         .argc = argc,
         .argv = argv,
-        .has_pipe = false,
-        .pipe_command_name = NULL,
-        .pipe_argc = 0,
-        .pipe_argv = NULL,
+        .num_commands = 0,           
+        .all_commands = NULL,        
+        .all_argc = NULL,            
+        .all_command_names = NULL,
     };
     
-    // Execute the builtin function
     func(&temp_ctx);
-    
-    // Exit the forked process
     exit(0);
 }

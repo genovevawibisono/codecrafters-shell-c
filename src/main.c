@@ -8,6 +8,8 @@
 #include <dirent.h>
 #include <sys/wait.h>
 #include <fcntl.h>
+#include <readline/readline.h>
+#include <readline/history.h>
 
 /* DEFINE CONSTANTS */
 #define MAX_COMMAND_LENGTH 1024
@@ -47,6 +49,8 @@ static void shell_type(struct command_context *ctx);
 static void shell_exec(struct command_context *ctx);
 static void shell_pwd(struct command_context *ctx);
 static void shell_cd(struct command_context *ctx);
+static char *command_generator(const char *text, int state);
+static char **command_completion(const char *text, int start, int end);
 
 /* OTHER HELPERS TO MAKE LIFE EASIER */
 struct command commands[] = {
@@ -59,21 +63,38 @@ struct command commands[] = {
 
 #define NUM_COMMANDS (sizeof(commands) / sizeof(commands[0]))
 
+char *command_names[] = {
+    "exit",
+    "echo",
+    NULL,
+};
+
 /* MAIN FUNCTION */
 
 int main(void) {
-    char line[MAX_COMMAND_LENGTH];
+    // Set up readline completion
+    rl_attempted_completion_function = command_completion;
+
+    char *line;
 
     while (1) {
-        setbuf(stdout, NULL);
-        printf("$ ");
-
-        if (!fgets(line, sizeof(line), stdin)) {
+        // Use readline instead of fgets - this is what enables TAB completion
+        line = readline("$ ");
+        
+        // Check if we got EOF (Ctrl+D)
+        if (!line) {
             break;
         }
-
-        trim_newline(line);
-
+        
+        // Skip empty lines
+        if (strlen(line) == 0) {
+            free(line);
+            continue;
+        }
+        
+        // Add to history (optional but nice - lets us use up arrow)
+        add_history(line);
+        
         struct command_context ctx = {
             .redirect = false,
             .out_file = NULL,
@@ -88,16 +109,15 @@ int main(void) {
 
         parse_command_line(line, &ctx);
 
-        // Skip empty commands
+        // Skip empty commands after parsing
         if (ctx.command_name == NULL || ctx.argc == 0) {
+            free(line);
             continue;
         }
 
-        // debug_print_context(&ctx);
-
         bool found = false;
         for (size_t i = 0; i < NUM_COMMANDS; i++) {
-            if (strcmp(ctx.command_name, commands[i].name) == 0) {  // ← USE ctx.command_name
+            if (strcmp(ctx.command_name, commands[i].name) == 0) {
                 commands[i].func(&ctx);
                 found = true;
                 break;
@@ -122,6 +142,8 @@ int main(void) {
         if (ctx.error_file) {
             free(ctx.error_file);
         }
+        
+        free(line);
     }
 
     return 0;
@@ -540,4 +562,40 @@ static void shell_cd(struct command_context *ctx) {
         fprintf(stderr, "cd: %s: No such file or directory\n", ctx->argv[1]);
         return;
     }
+}
+
+static char *command_generator(const char *text, int state) {
+    if (text == NULL) {
+        fprintf(stderr, "[command generator] text is NULL\n");
+        return NULL;
+    }
+
+    static int list_idx, len;
+    char *name;
+
+    if (!state) {
+        list_idx = 0;
+        len = strlen(text);
+    }
+
+    while ((name = command_names[list_idx++])) {
+        if (strncmp(name, text, len) == 0) {
+            return strdup(name);
+        }
+    }
+
+    return NULL;
+}
+
+static char **command_completion(const char *text, int start, int end) {
+    if (text == NULL) {
+        fprintf(stderr, "[command completion] text is NULL\n");
+        return NULL;
+    }
+
+    if (start == 0) {
+        return rl_completion_matches(text, command_generator);
+    }
+
+    return NULL;
 }

@@ -59,6 +59,10 @@ static bool is_executable(const char *path);
 static char *path_executable_generator(const char *text, int state);
 static void shell_exec_pipeline(struct command_context *ctx);
 static char *find_executable_in_path(const char *command_name);
+static bool is_builtin(const char *command_name);
+static command_function get_builtin_function(const char *command_name);
+static void execute_builtin_in_fork(const char *command_name, char **argv, int argc, 
+                                   int stdin_fd, int stdout_fd);
 
 /* OTHER HELPERS TO MAKE LIFE EASIER */
 struct command commands[] = {
@@ -127,6 +131,8 @@ int main(void) {
             continue;
         }
 
+        // debug_print_context(&ctx);
+
         // Check if it's a pipeline
         if (ctx.has_pipe) {
             // Execute pipeline (only for external commands)
@@ -148,8 +154,25 @@ int main(void) {
         }
 
         // Free allocated memory
-        for (int i = 0; i < ctx.argc; i++) {
-            free(ctx.argv[i]);
+        if (ctx.has_pipe) {
+            // Free first command argv (up to pipe position)
+            for (int i = 0; i < ctx.argc; i++) {
+                if (ctx.argv[i]) free(ctx.argv[i]);
+            }
+            // Free the pipe operator if it wasn't freed already
+            if (ctx.argv[ctx.argc]) {
+                free(ctx.argv[ctx.argc]);
+            }
+            // Free second command argv
+            for (int i = 0; i < ctx.pipe_argc; i++) {
+                if (ctx.pipe_argv[i]) free(ctx.pipe_argv[i]);
+            }
+            free(ctx.pipe_argv);
+        } else {
+            // Normal free
+            for (int i = 0; i < ctx.argc; i++) {
+                if (ctx.argv[i]) free(ctx.argv[i]);
+            }
         }
         free(ctx.argv);
 
@@ -184,6 +207,7 @@ static void parse_command_line(char *line, struct command_context *ctx) {
         ctx->command_name = NULL;
         ctx->argv[0] = NULL;
         ctx->argc = 0;
+        ctx->has_pipe = false;
         return;
     }
     
@@ -193,6 +217,7 @@ static void parse_command_line(char *line, struct command_context *ctx) {
     char *p = line;
     char quote_type = '\0';
     
+    // === TOKENIZATION LOOP (THIS WAS MISSING!) ===
     while (*p != '\0') {
         // Handle backslash OUTSIDE quotes
         if (*p == '\\' && quote_type == '\0') {
@@ -257,6 +282,44 @@ static void parse_command_line(char *line, struct command_context *ctx) {
         ctx->argv[count++] = strdup(token_buffer);
     }
     
+    // === CHECK FOR PIPE FIRST ===
+    int pipe_position = -1;
+    for (int i = 0; i < count; i++) {
+        if (strcmp(ctx->argv[i], "|") == 0) {
+            pipe_position = i;
+            break;
+        }
+    }
+    
+    if (pipe_position != -1) {
+        // We have a pipe!
+        ctx->has_pipe = true;
+        
+        // First command: everything before pipe
+        ctx->command_name = ctx->argv[0];
+        ctx->argc = pipe_position;
+        
+        // Create new argv array for second command
+        ctx->pipe_argc = count - pipe_position - 1;
+        ctx->pipe_argv = malloc((ctx->pipe_argc + 1) * sizeof(char *));
+        
+        for (int i = 0; i < ctx->pipe_argc; i++) {
+            ctx->pipe_argv[i] = ctx->argv[pipe_position + 1 + i];
+        }
+        ctx->pipe_argv[ctx->pipe_argc] = NULL;
+        ctx->pipe_command_name = ctx->pipe_argv[0];
+        
+        // Null-terminate first command's argv
+        ctx->argv[pipe_position] = NULL;
+        
+        // Don't free the pipe symbol here - we'll handle it later
+        
+        return;
+    }
+    
+    // === NO PIPE, PROCESS REDIRECTS ===
+    ctx->has_pipe = false;
+    
     // Process redirect operators
     int final_argc = 0;
     for (int i = 0; i < count; i++) {
@@ -264,7 +327,7 @@ static void parse_command_line(char *line, struct command_context *ctx) {
             if (i + 1 < count) {
                 ctx->redirect = true;
                 ctx->out_file = strdup(ctx->argv[i + 1]);
-                ctx->out_mode = O_TRUNC;  // Overwrite mode
+                ctx->out_mode = O_TRUNC;
                 free(ctx->argv[i]);
                 free(ctx->argv[i + 1]);
                 i++;
@@ -273,7 +336,7 @@ static void parse_command_line(char *line, struct command_context *ctx) {
             if (i + 1 < count) {
                 ctx->redirect = true;
                 ctx->out_file = strdup(ctx->argv[i + 1]);
-                ctx->out_mode = O_APPEND;  // Append mode
+                ctx->out_mode = O_APPEND;
                 free(ctx->argv[i]);
                 free(ctx->argv[i + 1]);
                 i++;
@@ -282,7 +345,7 @@ static void parse_command_line(char *line, struct command_context *ctx) {
             if (i + 1 < count) {
                 ctx->redirect_err = true;
                 ctx->error_file = strdup(ctx->argv[i + 1]);
-                ctx->err_mode = O_TRUNC;  // Overwrite mode
+                ctx->err_mode = O_TRUNC;
                 free(ctx->argv[i]);
                 free(ctx->argv[i + 1]);
                 i++;
@@ -291,56 +354,13 @@ static void parse_command_line(char *line, struct command_context *ctx) {
             if (i + 1 < count) {
                 ctx->redirect_err = true;
                 ctx->error_file = strdup(ctx->argv[i + 1]);
-                ctx->err_mode = O_APPEND;  // Append mode
+                ctx->err_mode = O_APPEND;
                 free(ctx->argv[i]);
                 free(ctx->argv[i + 1]);
                 i++;
             }
         } else {
             ctx->argv[final_argc++] = ctx->argv[i];
-        }
-    }
-
-    // Inside parse_command_line(), after processing redirects:
-
-// Check for pipe operator
-int pipe_position = -1;
-for (int i = 0; i < final_argc; i++) {
-    if (strcmp(ctx->argv[i], "|") == 0) {
-        pipe_position = i;
-        break;
-    }
-}
-
-    if (pipe_position != -1) {
-        ctx->has_pipe = true;
-        
-        // First command: everything before the pipe
-        ctx->command_name = ctx->argv[0];
-        ctx->argc = pipe_position;
-        ctx->argv[pipe_position] = NULL;  // Terminate first command's argv
-        
-        // Second command: everything after the pipe
-        if (pipe_position + 1 < final_argc) {
-            ctx->pipe_command_name = ctx->argv[pipe_position + 1];
-            ctx->pipe_argc = final_argc - pipe_position - 1;
-            ctx->pipe_argv = &ctx->argv[pipe_position + 1];
-            ctx->pipe_argv[ctx->pipe_argc] = NULL;  // Terminate second command's argv
-        }
-        
-        // Free the pipe operator string
-        free(ctx->argv[pipe_position]);
-    } else {
-        // No pipe - normal command
-        ctx->has_pipe = false;
-        if (final_argc > 0) {
-            ctx->command_name = ctx->argv[0];
-            ctx->argc = final_argc;
-            ctx->argv[final_argc] = NULL;
-        } else {
-            ctx->command_name = NULL;
-            ctx->argc = 0;
-            ctx->argv[0] = NULL;
         }
     }
     
@@ -405,7 +425,11 @@ static void shell_echo(struct command_context *ctx) {
     }
     
     for (int i = 1; i < ctx->argc; i++) {
-        fprintf(output, "%s ", ctx->argv[i]);
+        fprintf(output, "%s", ctx->argv[i]);
+        // Only add space if not the last arg
+        if (i < ctx->argc - 1) {  
+            fprintf(output, " ");
+        }
     }
     fprintf(output, "\n");
     
@@ -768,27 +792,37 @@ static char *path_executable_generator(const char *text, int state) {
 }
 
 static void shell_exec_pipeline(struct command_context *ctx) {
-    // Find both executables in PATH
-    char *exec1_path = find_executable_in_path(ctx->command_name);
-    char *exec2_path = find_executable_in_path(ctx->pipe_command_name);
+    // Check if commands are builtins or need PATH lookup
+    bool cmd1_is_builtin = is_builtin(ctx->command_name);
+    bool cmd2_is_builtin = is_builtin(ctx->pipe_command_name);
     
-    if (!exec1_path) {
-        fprintf(stdout, "%s: command not found\n", ctx->command_name);
-        return;
+    char *exec1_path = NULL;
+    char *exec2_path = NULL;
+    
+    // Find external executables if needed
+    if (!cmd1_is_builtin) {
+        exec1_path = find_executable_in_path(ctx->command_name);
+        if (!exec1_path) {
+            fprintf(stdout, "%s: command not found\n", ctx->command_name);
+            return;
+        }
     }
     
-    if (!exec2_path) {
-        fprintf(stdout, "%s: command not found\n", ctx->pipe_command_name);
-        free(exec1_path);
-        return;
+    if (!cmd2_is_builtin) {
+        exec2_path = find_executable_in_path(ctx->pipe_command_name);
+        if (!exec2_path) {
+            fprintf(stdout, "%s: command not found\n", ctx->pipe_command_name);
+            if (exec1_path) free(exec1_path);
+            return;
+        }
     }
     
     // Create the pipe
     int pipe_fd[2];
     if (pipe(pipe_fd) == -1) {
         fprintf(stderr, "pipe: failed to create pipe\n");
-        free(exec1_path);
-        free(exec2_path);
+        if (exec1_path) free(exec1_path);
+        if (exec2_path) free(exec2_path);
         return;
     }
     
@@ -798,24 +832,27 @@ static void shell_exec_pipeline(struct command_context *ctx) {
         fprintf(stderr, "fork: failed\n");
         close(pipe_fd[0]);
         close(pipe_fd[1]);
-        free(exec1_path);
-        free(exec2_path);
+        if (exec1_path) free(exec1_path);
+        if (exec2_path) free(exec2_path);
         return;
     }
     
     if (pid1 == 0) {
         // FIRST CHILD PROCESS
-        // Close read end (we only write)
-        close(pipe_fd[0]);
+        close(pipe_fd[0]);  // Close read end
         
-        // Redirect stdout to pipe write end
-        dup2(pipe_fd[1], STDOUT_FILENO);
-        close(pipe_fd[1]);
-        
-        // Execute first command
-        execv(exec1_path, ctx->argv);
-        fprintf(stderr, "execv: failed to execute %s\n", ctx->command_name);
-        exit(1);
+        if (cmd1_is_builtin) {
+            // Execute builtin with stdout redirected to pipe
+            execute_builtin_in_fork(ctx->command_name, ctx->argv, ctx->argc,
+                                   STDIN_FILENO, pipe_fd[1]);
+        } else {
+            // Execute external command
+            dup2(pipe_fd[1], STDOUT_FILENO);
+            close(pipe_fd[1]);
+            execv(exec1_path, ctx->argv);
+            fprintf(stderr, "execv: failed to execute %s\n", ctx->command_name);
+            exit(1);
+        }
     }
     
     // Fork second child (second command)
@@ -824,28 +861,30 @@ static void shell_exec_pipeline(struct command_context *ctx) {
         fprintf(stderr, "fork: failed\n");
         close(pipe_fd[0]);
         close(pipe_fd[1]);
-        free(exec1_path);
-        free(exec2_path);
+        if (exec1_path) free(exec1_path);
+        if (exec2_path) free(exec2_path);
         return;
     }
     
     if (pid2 == 0) {
         // SECOND CHILD PROCESS
-        // Close write end (we only read)
-        close(pipe_fd[1]);
+        close(pipe_fd[1]);  // Close write end
         
-        // Redirect stdin to pipe read end
-        dup2(pipe_fd[0], STDIN_FILENO);
-        close(pipe_fd[0]);
-        
-        // Execute second command
-        execv(exec2_path, ctx->pipe_argv);
-        fprintf(stderr, "execv: failed to execute %s\n", ctx->pipe_command_name);
-        exit(1);
+        if (cmd2_is_builtin) {
+            // Execute builtin with stdin redirected from pipe
+            execute_builtin_in_fork(ctx->pipe_command_name, ctx->pipe_argv, 
+                                   ctx->pipe_argc, pipe_fd[0], STDOUT_FILENO);
+        } else {
+            // Execute external command
+            dup2(pipe_fd[0], STDIN_FILENO);
+            close(pipe_fd[0]);
+            execv(exec2_path, ctx->pipe_argv);
+            fprintf(stderr, "execv: failed to execute %s\n", ctx->pipe_command_name);
+            exit(1);
+        }
     }
     
     // PARENT PROCESS
-    // Close both pipe ends (children have their copies)
     close(pipe_fd[0]);
     close(pipe_fd[1]);
     
@@ -853,8 +892,8 @@ static void shell_exec_pipeline(struct command_context *ctx) {
     waitpid(pid1, NULL, 0);
     waitpid(pid2, NULL, 0);
     
-    free(exec1_path);
-    free(exec2_path);
+    if (exec1_path) free(exec1_path);
+    if (exec2_path) free(exec2_path);
 }
 
 // Helper to find executable in PATH
@@ -898,4 +937,69 @@ static char *find_executable_in_path(const char *command_name) {
     
     free(path_copy);
     return executable_path;
+}
+
+// Helper to check if a command is a builtin
+static bool is_builtin(const char *command_name) {
+    for (size_t i = 0; i < NUM_COMMANDS; i++) {
+        if (strcmp(commands[i].name, command_name) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Helper to get builtin function
+static command_function get_builtin_function(const char *command_name) {
+    for (size_t i = 0; i < NUM_COMMANDS; i++) {
+        if (strcmp(commands[i].name, command_name) == 0) {
+            return commands[i].func;
+        }
+    }
+    return NULL;
+}
+
+static void execute_builtin_in_fork(const char *command_name, char **argv, int argc, 
+                                   int stdin_fd, int stdout_fd) {
+    // Get the builtin function
+    command_function func = get_builtin_function(command_name);
+    if (!func) {
+        fprintf(stderr, "%s: builtin not found\n", command_name);
+        exit(1);
+    }
+    
+    // Redirect stdin if needed
+    if (stdin_fd != STDIN_FILENO) {
+        dup2(stdin_fd, STDIN_FILENO);
+        close(stdin_fd);
+    }
+    
+    // Redirect stdout if needed
+    if (stdout_fd != STDOUT_FILENO) {
+        dup2(stdout_fd, STDOUT_FILENO);
+        close(stdout_fd);
+    }
+    
+    // Create a temporary context for the builtin
+    struct command_context temp_ctx = {
+        .redirect = false,
+        .out_file = NULL,
+        .out_mode = O_TRUNC,
+        .redirect_err = false,
+        .error_file = NULL,
+        .err_mode = O_TRUNC,
+        .command_name = (char *)command_name,
+        .argc = argc,
+        .argv = argv,
+        .has_pipe = false,
+        .pipe_command_name = NULL,
+        .pipe_argc = 0,
+        .pipe_argv = NULL,
+    };
+    
+    // Execute the builtin function
+    func(&temp_ctx);
+    
+    // Exit the forked process
+    exit(0);
 }

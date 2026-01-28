@@ -1058,22 +1058,46 @@ static void execute_builtin_in_fork(const char *command_name, char **argv, int a
 }
 
 static void shell_history(struct command_context *ctx) {
-    (void)ctx; 
+    FILE *output = stdout;
     
-    // Get the history list from readline
-    HIST_ENTRY **list = history_list();
-    
-    // No history yet
-    if (!list) {
-        return;  
+    if (ctx->redirect && ctx->out_file) {
+        const char *mode = (ctx->out_mode == O_APPEND) ? "a" : "w";
+        output = fopen(ctx->out_file, mode);
+        if (!output) {
+            fprintf(stderr, "history: %s: cannot create file\n", ctx->out_file);
+            return;
+        }
     }
     
-    // Print each history entry
-    // history_base is the starting index (usually 1)
-    // history_length is the number of entries
-    for (int i = 0; i < history_length; i++) {
-        if (list[i]) {
-            printf("%5d  %s\n", i + history_base, list[i]->line);
+    HIST_ENTRY **hist_list = history_list();
+    
+    if (!hist_list) {
+        if (output != stdout) {
+            fclose(output);
         }
+        return;
+    }
+    
+    int start_index = 0;
+    int total_entries = history_length;
+    
+    // Check if user provided a number argument (history <n>)
+    if (ctx->argc >= 2) {
+        int n = atoi(ctx->argv[1]);
+        if (n > 0 && n < total_entries) {
+            start_index = total_entries - n;
+        }
+        // If n >= total_entries, show all (start_index stays 0)
+    }
+    
+    // Print history entries from start_index onwards
+    for (int i = start_index; i < total_entries; i++) {
+        if (hist_list[i]) {
+            fprintf(output, "%5d  %s\n", i + history_base, hist_list[i]->line);
+        }
+    }
+    
+    if (output != stdout) {
+        fclose(output);
     }
 }

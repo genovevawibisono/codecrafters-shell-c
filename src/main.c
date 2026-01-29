@@ -64,6 +64,7 @@ static command_function get_builtin_function(const char *command_name);
 static void execute_builtin_in_fork(const char *command_name, char **argv, int argc, 
                                    int stdin_fd, int stdout_fd);
 static void shell_history(struct command_context *ctx);
+static void load_history_histfile(void);
 
 /* OTHER HELPERS TO MAKE LIFE EASIER */
 struct command commands[] = {
@@ -94,6 +95,8 @@ static int last_history_written = 0;
 int main(void) {
     // Set up readline completion
     rl_attempted_completion_function = command_completion;
+
+    load_history_histfile();
 
     char *line;
 
@@ -1202,5 +1205,28 @@ static void shell_history(struct command_context *ctx) {
     
     if (output != stdout) {
         fclose(output);
+    }
+}
+
+static void load_history_histfile(void) {
+    char *histfile = getenv("HISTFILE");
+    if (histfile) {
+        FILE *file = fopen(histfile, "r");
+        if (file) {
+            char line[MAX_COMMAND_LENGTH];
+            while (fgets(line, sizeof(line), file)) {
+                // Remove trailing newline
+                size_t len = strlen(line);
+                if (len > 0 && line[len - 1] == '\n') {
+                    line[len - 1] = '\0';
+                }
+                
+                // Skip empty lines
+                if (strlen(line) > 0) {
+                    add_history(line);
+                }
+            }
+            fclose(file);
+        }
     }
 }

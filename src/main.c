@@ -87,6 +87,8 @@ char *command_names[] = {
     NULL,
 };
 
+static int last_history_written = 0;
+
 /* MAIN FUNCTION */
 
 int main(void) {
@@ -1126,6 +1128,43 @@ static void shell_history(struct command_context *ctx) {
                 }
             }
         }
+
+        last_history_written = history_length;
+        
+        fclose(history_file);
+        
+        if (output != stdout) {
+            fclose(output);
+        }
+        return;
+    }
+
+    if (ctx->argc >= 3 && strcmp(ctx->argv[1], "-a") == 0) {
+        const char *filepath = ctx->argv[2];
+        
+        // Open in APPEND mode
+        FILE *history_file = fopen(filepath, "a");
+        if (!history_file) {
+            fprintf(stderr, "history: %s: cannot open file\n", filepath);
+            if (output != stdout) {
+                fclose(output);
+            }
+            return;
+        }
+        
+        HIST_ENTRY **hist_list = history_list();
+        
+        if (hist_list) {
+            // Only write NEW commands since last_history_written
+            for (int i = last_history_written; i < history_length; i++) {
+                if (hist_list[i]) {
+                    fprintf(history_file, "%s\n", hist_list[i]->line);
+                }
+            }
+        }
+        
+        // Update the last written position
+        last_history_written = history_length;
         
         fclose(history_file);
         
@@ -1135,7 +1174,7 @@ static void shell_history(struct command_context *ctx) {
         return;
     }
     
-    // Normal history display (existing code)
+    // Normal history display 
     HIST_ENTRY **hist_list = history_list();
     
     if (!hist_list) {

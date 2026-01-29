@@ -1069,6 +1069,43 @@ static void shell_history(struct command_context *ctx) {
         }
     }
     
+    // Check for -r flag (read from file)
+    if (ctx->argc >= 3 && strcmp(ctx->argv[1], "-r") == 0) {
+        const char *filepath = ctx->argv[2];
+        
+        FILE *history_file = fopen(filepath, "r");
+        if (!history_file) {
+            fprintf(stderr, "history: %s: cannot open file\n", filepath);
+            if (output != stdout) {
+                fclose(output);
+            }
+            return;
+        }
+        
+        // Read file line by line and add to history
+        char line[MAX_COMMAND_LENGTH];
+        while (fgets(line, sizeof(line), history_file)) {
+            // Remove trailing newline
+            size_t len = strlen(line);
+            if (len > 0 && line[len - 1] == '\n') {
+                line[len - 1] = '\0';
+            }
+            
+            // Skip empty lines
+            if (strlen(line) > 0) {
+                add_history(line);
+            }
+        }
+        
+        fclose(history_file);
+        
+        if (output != stdout) {
+            fclose(output);
+        }
+        return;
+    }
+    
+    // Normal history display
     HIST_ENTRY **hist_list = history_list();
     
     if (!hist_list) {
@@ -1087,7 +1124,6 @@ static void shell_history(struct command_context *ctx) {
         if (n > 0 && n < total_entries) {
             start_index = total_entries - n;
         }
-        // If n >= total_entries, show all (start_index stays 0)
     }
     
     // Print history entries from start_index onwards

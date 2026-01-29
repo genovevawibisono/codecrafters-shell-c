@@ -65,6 +65,7 @@ static void execute_builtin_in_fork(const char *command_name, char **argv, int a
                                    int stdin_fd, int stdout_fd);
 static void shell_history(struct command_context *ctx);
 static void load_history_histfile(void);
+static void write_history_histfile(void);
 
 /* OTHER HELPERS TO MAKE LIFE EASIER */
 struct command commands[] = {
@@ -199,6 +200,7 @@ int main(void) {
         
         free(line);
     }
+
 
     return 0;
 }
@@ -429,6 +431,9 @@ static void debug_print_context(struct command_context *ctx) {
 
 static void shell_exit(struct command_context *ctx) {
 	(void) ctx;
+
+    write_history_histfile();
+
     exit(DEFAULT_EXIT_STATUS);
 }
 
@@ -1224,6 +1229,28 @@ static void load_history_histfile(void) {
                 // Skip empty lines
                 if (strlen(line) > 0) {
                     add_history(line);
+                }
+            }
+            fclose(file);
+        }
+    }
+}
+
+static void write_history_histfile(void) {
+    char *histfile = getenv("HISTFILE");
+
+    if (histfile) {
+        FILE *file = fopen(histfile, "w");
+        if (file) {
+            // Get history list
+            HIST_ENTRY **hist_list = history_list();
+            
+            if (hist_list) {
+                // Write each history entry to file
+                for (int i = 0; i < history_length; i++) {
+                    if (hist_list[i]) {
+                        fprintf(file, "%s\n", hist_list[i]->line);
+                    }
                 }
             }
             fclose(file);

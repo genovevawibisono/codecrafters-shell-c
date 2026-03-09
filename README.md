@@ -76,6 +76,7 @@ for (size_t i = 0; i < NUM_COMMANDS; i++) {
 - **Easy to extend**: Adding a new builtin is just one line in the table
 - **Single responsibility**: Each command implementation is isolated in its own function
 - **Type safety**: Compiler ensures all command functions have the same signature
+- - **Kernel Design Pattern**: This dispatch table architecture directly mirrors syscall dispatch tables used in production OS kernels. In seL4, one of the world's few formally verified microkernels, system calls are resolved through indexed function pointer tables rather than conditional chains — the same principle applied here at the shell level.
 
 **Performance**: O(N) lookup where N = number of builtins (currently 6). For better performance with many builtins, this could be upgraded to a hash table, but linear search is fine for small N.
 
@@ -324,10 +325,11 @@ This project deepened my understanding of:
 - Memory management in complex C programs
 - The design decisions that make interactive tools responsive
 - How function pointers enable clean, extensible architectures
+- How userspace dispatch patterns reflect kernel architecture decisions, from shell builtins to seL4 system call tables
 
 ## Acknowledgments
 
-Built as a systems programming learning project. Inspired by the architecture of bash and zsh, implemented from first principles to understand the underlying mechanisms.
+Built as a systems programming learning project. Inspired by the architecture of bash and zsh, implemented from first principles to understand the underlying mechanisms. 
 
 ---
 

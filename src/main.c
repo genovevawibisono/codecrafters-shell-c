@@ -11,6 +11,9 @@
 #include <readline/readline.h>
 #include <readline/history.h>
 
+/* INCLUDE HEADERS */
+#include "structs.h"
+
 /* DEFINE CONSTANTS */
 #define MAX_COMMAND_LENGTH 1024
 #define DEFAULT_EXIT_STATUS 0
@@ -18,30 +21,6 @@
 #define ECHO_LENGTH 4
 #define MAX_PATH_LENGTH 1024
 #define ARGV_MAX_CAPACITY 1024
-
-/* DEFINE STRUCTS AND TYPEDEFS */
-struct command_context {
-	bool redirect;
-	char *out_file;
-    int out_mode;
-    bool redirect_err;
-    char *error_file;
-    int err_mode;
-	char *command_name;
-    int argc;
-    char **argv;
-    int num_commands;
-    char ***all_commands;
-    int *all_argc;
-    char **all_command_names;
-};
-
-typedef void (*command_function)(struct command_context *);
-
-struct command {
-	const char *name;
-	command_function func;
-};
 
 /* FUNCTION HEADERS */
 static void trim_newline(char *s);

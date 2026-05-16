@@ -55,6 +55,7 @@ static void shell_pwd(struct command_context *ctx);
 static void shell_cd(struct command_context *ctx);
 static char *command_generator(const char *text, int state);
 static char **command_completion(const char *text, int start, int end);
+static char *filename_generator(const char *text, int state);
 static bool is_executable(const char *path);
 static char *path_executable_generator(const char *text, int state);
 static void shell_exec_pipeline(struct command_context *ctx);
@@ -722,7 +723,8 @@ static char **command_completion(const char *text, int start, int end) {
         return rl_completion_matches(text, command_generator);
     }
 
-    return NULL;
+    /* For arguments (start != 0) provide filename completion from CWD */
+    return rl_completion_matches(text, filename_generator);
 }
 
 static bool is_executable(const char *path) {
@@ -821,6 +823,50 @@ static char *path_executable_generator(const char *text, int state) {
                 return strdup(name);
             }
         }
+    }
+
+    return NULL;
+}
+
+/* Filename completion for arguments: search current directory for entries
+ * starting with the given text and return them with a trailing space.
+ */
+static char *filename_generator(const char *text, int state) {
+    static DIR *dir = NULL;
+    static int text_len = 0;
+    struct dirent *entry;
+
+    if (text == NULL) {
+        return NULL;
+    }
+
+    if (!state) {
+        if (dir) {
+            closedir(dir);
+            dir = NULL;
+        }
+
+        dir = opendir(".");
+        if (!dir) {
+            return NULL;
+        }
+        text_len = strlen(text);
+    }
+
+    while ((entry = readdir(dir)) != NULL) {
+        // Skip current/parent entries
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+
+        if (strncmp(entry->d_name, text, text_len) == 0) {
+            return strdup(entry->d_name);
+        }
+    }
+
+    if (dir) {
+        closedir(dir);
+        dir = NULL;
     }
 
     return NULL;

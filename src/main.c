@@ -46,6 +46,7 @@ static void execute_builtin_in_fork(const char *command_name, char **argv, int a
 static void shell_history(struct command_context *ctx);
 static void load_history_histfile(void);
 static void write_history_histfile(void);
+static char *directory_generator(const char *text, int state);
 
 /* OTHER HELPERS TO MAKE LIFE EASIER */
 struct command commands[] = {
@@ -702,8 +703,16 @@ static char **command_completion(const char *text, int start, int end) {
         return rl_completion_matches(text, command_generator);
     }
 
+    char command[MAX_COMMAND_LENGTH] = {0};
+    sscanf(rl_line_buffer, "%s", command);
+    if (strcmp(command, "cd") == 0) {
+        rl_completion_append_character = '\0';
+        return rl_completion_matches(text, directory_generator);
+    }
+
     /* For arguments (start != 0) provide filename completion from CWD */
-    return rl_completion_matches(text, filename_generator);
+    rl_filename_completion_desired = 1;
+    return rl_completion_matches(text, rl_filename_completion_function);
 }
 
 static bool is_executable(const char *path) {
@@ -839,7 +848,65 @@ static char *filename_generator(const char *text, int state) {
         }
 
         if (strncmp(entry->d_name, text, text_len) == 0) {
+            struct stat st;
+            if (stat(entry->d_name, &st) == 0 && S_ISDIR(st.st_mode)) {
+                char *result = malloc(strlen(entry->d_name) + 2);
+                sprintf(result, "%s/", entry->d_name);
+                return result;
+            }
             return strdup(entry->d_name);
+        }
+    }
+
+    if (dir) {
+        closedir(dir);
+        dir = NULL;
+    }
+
+    return NULL;
+}
+
+static char *directory_generator(const char *text, int state) {
+    static DIR *dir = NULL;
+    static int text_len = 0;
+    struct dirent *entry;
+
+    if (text == NULL) {
+        return NULL;
+    }
+
+    if (!state) {
+        if (dir) {
+            closedir(dir);
+            dir = NULL;
+        }
+
+        dir = opendir(".");
+        if (!dir) {
+            return NULL;
+        }
+        text_len = strlen(text);
+    }
+
+    while ((entry = readdir(dir)) != NULL) {
+        // Skip current/parent entries
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+
+        // Check if it's a directory
+        struct stat st;
+        if (stat(entry->d_name, &st) == -1) {
+            continue;
+        }
+        if (!S_ISDIR(st.st_mode)) {
+            continue;
+        }
+
+        if (strncmp(entry->d_name, text, text_len) == 0) {
+            char *result = malloc(strlen(entry->d_name) + 2);
+            sprintf(result, "%s/", entry->d_name);
+            return result;
         }
     }
 

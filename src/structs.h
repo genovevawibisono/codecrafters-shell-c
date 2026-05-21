@@ -1,3 +1,23 @@
+#ifndef STRUCTS_H
+#define STRUCTS_H
+
+/* INCLUDE LIBRARIES */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdbool.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <dirent.h>
+#include <sys/wait.h>
+#include <fcntl.h>
+#include <readline/readline.h>
+#include <readline/history.h>
+
+/* DEFINE CONSTANTS */
+#define MAX_COMMAND_LENGTH 1024
+#define ARGV_MAX_CAPACITY 1024
+
 /* DEFINE STRUCTS AND TYPEDEFS */
 struct command_context {
 	bool redirect;
@@ -21,3 +41,5 @@ struct command {
 	const char *name;
 	command_function func;
 };
+
+#endif

@@ -93,6 +93,12 @@ void parse_command_line(char *line, struct command_context *ctx) {
         }
         ctx->argv[count++] = strdup(token_buffer);
     }
+
+    if (count > 0 && strcmp(ctx->argv[count - 1], "&") == 0) {
+        ctx->background_job = 1;
+        free(ctx->argv[--count]);
+        ctx->argv[count] = NULL;
+    }
     
     // === CHECK FOR PIPES ===
     int num_pipes = 0;
@@ -224,6 +230,29 @@ static void debug_print_context(struct command_context *ctx) {
     }
     
     fprintf(stderr, "=============================\n");
+}
+
+char *resolve_executable(const char *name) {
+    char *path_env = getenv("PATH");
+    if (!path_env) return NULL;
+
+    char *path_copy = strdup(path_env);
+    char *token = strtok(path_copy, ":");
+    char *result = NULL;
+
+    while (token) {
+        char full_path[1024];
+        snprintf(full_path, sizeof(full_path), "%s/%s", token, name);
+        struct stat st;
+        if (stat(full_path, &st) == 0 && S_ISREG(st.st_mode) && (st.st_mode & S_IXUSR)) {
+            result = strdup(full_path);
+            break;
+        }
+        token = strtok(NULL, ":");
+    }
+
+    free(path_copy);
+    return result;
 }
 
 bool is_executable(const char *path) {

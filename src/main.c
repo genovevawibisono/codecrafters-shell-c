@@ -5,12 +5,15 @@
 #include "executables.h"
 #include "generator.h"
 #include "history.h"
+#include "dictionary.h"
+#include "jobs.h"
 
 int main(void) {
     // Set up readline completion
     rl_attempted_completion_function = command_completion;
 
     load_history_histfile();
+    dictionary = dictionary_new();
 
     char *line;
 
@@ -46,6 +49,7 @@ int main(void) {
             .all_argc = NULL,
             .all_commands = NULL,
             .all_command_names = NULL,
+            .background_job = 0,
         };
 
         parse_command_line(line, &ctx);
@@ -79,7 +83,11 @@ int main(void) {
             }
             
             if (!found) {
-                shell_exec(&ctx);
+                if (ctx.background_job) {
+                    job_add(0, &ctx);
+                } else {
+                    shell_exec(&ctx);
+                }
             }
         }
 

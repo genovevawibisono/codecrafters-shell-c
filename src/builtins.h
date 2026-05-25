@@ -3,6 +3,7 @@
 
 #include "structs.h"
 #include "history.h"
+#include "utilities.h"
 
 /* INCLUDE LIBRARIES */
 #include <stdio.h>

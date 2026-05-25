@@ -33,6 +33,7 @@ struct command_context {
     char ***all_commands;
     int *all_argc;
     char **all_command_names;
+    int background_job;
 };
 
 typedef void (*command_function)(struct command_context *);

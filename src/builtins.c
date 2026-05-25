@@ -126,43 +126,8 @@ static void shell_type(struct command_context *ctx) {
 }
 
 void shell_exec(struct command_context *ctx) {
-    char *path_env = getenv("PATH");
-    char *executable_path = NULL;
-    
-    if (path_env) {
-        char *path_copy = strdup(path_env);
-        char *token = strtok(path_copy, ":");
-        
-        while (token) {
-            DIR *dir = opendir(token);
-            if (dir) {
-                struct dirent *entry;
-                while ((entry = readdir(dir)) != NULL) {
-                    if (strcmp(entry->d_name, ctx->command_name) == 0) {
-                        char full_path[1024];
-                        snprintf(full_path, sizeof(full_path), "%s/%s", 
-                                token, entry->d_name);
-                        
-                        if (access(full_path, X_OK) == 0) {
-                            struct stat path_stat;
-                            stat(full_path, &path_stat);
-                            if (S_ISREG(path_stat.st_mode)) {
-                                executable_path = strdup(full_path);
-                                break;
-                            }
-                        }
-                    }
-                }
-                closedir(dir);
-            }
-            if (executable_path) {
-                break;
-            }
-            token = strtok(NULL, ":");
-        }
-        free(path_copy);
-    }
-    
+    char *executable_path = resolve_executable(ctx->command_name);
+
     if (!executable_path) {
         fprintf(stdout, "%s: command not found\n", ctx->command_name);
         return;

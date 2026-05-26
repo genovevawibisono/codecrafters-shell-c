@@ -129,11 +129,13 @@ int dictionary_remove(dictionary_t *dictionary, pid_t job_pid) {
         return -1;
     }
 
+    int ret = temp->job_id;
+
     prev->next = temp->next;
     free(temp->cmd);
     free(temp);
 
-    return 0;
+    return ret;
 }
 
 void dictionary_display(dictionary_t *dictionary) {
@@ -235,6 +237,7 @@ void dictionary_reap(dictionary_t *dictionary) {
                 } else {
                     prev->next = next;
                 }
+                job_id_recycle(curr->job_id);
                 free(curr->cmd);
                 free(curr);
                 dictionary->current_capacity--;
@@ -294,6 +297,7 @@ void dictionary_jobs(dictionary_t *dictionary) {
                 } else {
                     prev->next = next;
                 }
+                job_id_recycle(curr->job_id);
                 free(curr->cmd);
                 free(curr);
                 dictionary->current_capacity--;

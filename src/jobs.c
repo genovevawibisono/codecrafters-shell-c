@@ -4,6 +4,12 @@
 
 static unsigned int job_id_counter = 0;
 int job_count = 0;
+job_number_list_t *job_number_list = NULL;
+
+static job_number_node_t *job_number_node_new(unsigned int job_id);
+static int job_number_list_enqueue(unsigned int job_id);
+static unsigned int job_number_list_peek(void);
+static void job_number_list_remove_head(void);
 
 job_t *job_new(struct command_context *ctx) {
     char *exe = resolve_executable(ctx->command_name);
@@ -41,14 +47,19 @@ job_t *job_new(struct command_context *ctx) {
         strcat(cmd, ctx->argv[i]);
     }
     new->pid = pid;
-    new->job_id = ++job_id_counter;
+    
+    if (job_number_list->head == NULL) {
+        new->job_id = ++job_count;
+    } else {
+        new->job_id = job_number_list_peek();
+        job_number_list_remove_head();
+    }
+
     new->cmd = strdup(cmd);
     new->is_running = true;
     new->most_recent = true;
     new->second_most_recent = false;
     new->next = NULL;
-
-    job_count++;
 
     fprintf(stdout, "[%d] %d\n", new->job_id, new->pid);
 
@@ -99,4 +110,80 @@ void job_display(job_t *job) {
     } else {
         fprintf(stdout, "[%d]%c  %-24s%s\n", job->job_id, marker, "Done", job->cmd);
     }
+}
+
+static job_number_node_t *job_number_node_new(unsigned int job_id) {
+    job_number_node_t *new = malloc(sizeof(job_number_node_t));
+    if (new == NULL) {
+        fprintf(stderr, "[job number node new] failed to malloc for job number node\n");
+        return NULL;
+    }
+
+    new->job_id = job_id;
+    new->next = NULL;
+
+    return new;
+}
+
+int job_number_list_new(void) {
+    job_number_list = malloc(sizeof(*job_number_list));
+    if (job_number_list == NULL) {
+        fprintf(stderr, "[job number list new] failed to create job number list\n");
+        return -1;
+    }
+
+    job_number_list->head = NULL;
+    job_number_list->size = 0;
+
+    return 0;
+}
+
+static int job_number_list_enqueue(unsigned int job_id) {
+    if (job_number_list == NULL) {
+        fprintf(stderr, "[job number list enqueue] job number list does not exist yet\n");
+        return -1;
+    }
+
+    job_number_node_t *node = job_number_node_new(job_id);
+    if (node == NULL) {
+        fprintf(stderr, "[job number list enqueue] failed to create a new job number node\n");
+        return -1;
+    }
+
+    if (job_number_list->head == NULL) {
+        job_number_list->head = node;
+        job_number_list->size++;
+
+        return 0;
+    }
+
+    job_number_node_t *curr = job_number_list->head;
+    while (curr->next != NULL) {
+        curr = curr->next;
+    }
+    curr->next = node;
+    job_number_list->size++;
+
+    return 0;
+}
+
+static unsigned int job_number_list_peek(void) {
+    return job_number_list->head->job_id;
+}
+
+static void job_number_list_remove_head(void) {
+    if (job_number_list->head == NULL) {
+        fprintf(stderr, "[job number list remove head] list is empty\n");
+        return;
+    }
+
+    job_number_node_t *tmp = job_number_list->head;
+    job_number_list->head = job_number_list->head->next;
+    free(tmp);
+
+    return;
+}
+
+void job_id_recycle(unsigned int job_id) {
+    job_number_list_enqueue(job_id);
 }

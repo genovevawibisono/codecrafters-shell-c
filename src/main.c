@@ -14,6 +14,7 @@ int main(void) {
 
     load_history_histfile();
     dictionary = dictionary_new();
+    job_number_list_new();
 
     char *line;
 

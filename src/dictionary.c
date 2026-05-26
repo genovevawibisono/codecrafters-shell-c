@@ -164,13 +164,48 @@ static void dictionary_maintain(dictionary_t *dictionary) {
     } 
 }
 
+static int compare_job_id(const void *a, const void *b) {
+    job_t *ja = *(job_t **)a;
+    job_t *jb = *(job_t **)b;
+    return (int)ja->job_id - (int)jb->job_id;
+}
+
 void dictionary_jobs(dictionary_t *dictionary) {
+    // collect all jobs into a flat array so we can sort by job_id
+    job_t **jobs = malloc(dictionary->current_capacity * sizeof(job_t *));
+    if (!jobs) return;
+    int count = 0;
+
+    for (int i = 0; i < (int)dictionary->max_capacity; i++) {
+        job_t *curr = dictionary->items[i];
+        while (curr != NULL) {
+            jobs[count++] = curr;
+            curr = curr->next;
+        }
+    }
+
+    qsort(jobs, count, sizeof(job_t *), compare_job_id);
+
+    // recompute markers based on surviving jobs ordered by job_id
+    for (int i = 0; i < count; i++) {
+        jobs[i]->most_recent = false;
+        jobs[i]->second_most_recent = false;
+    }
+    if (count >= 1) jobs[count - 1]->most_recent = true;
+    if (count >= 2) jobs[count - 2]->second_most_recent = true;
+
+    for (int i = 0; i < count; i++) {
+        job_display(jobs[i]);
+    }
+
+    free(jobs);
+
+    // remove done jobs
     for (int i = 0; i < (int)dictionary->max_capacity; i++) {
         job_t *prev = NULL;
         job_t *curr = dictionary->items[i];
         while (curr != NULL) {
             job_t *next = curr->next;
-            job_display(curr);
             if (!curr->is_running) {
                 if (prev == NULL) {
                     dictionary->items[i] = next;

@@ -40,8 +40,6 @@ job_t *job_new(struct command_context *ctx) {
         if (i > 0) strcat(cmd, " ");
         strcat(cmd, ctx->argv[i]);
     }
-    strcat(cmd, " &");
-
     new->pid = pid;
     new->job_id = ++job_id_counter;
     new->cmd = strdup(cmd);
@@ -87,7 +85,7 @@ void job_display(job_t *job) {
     // check if process is still alive without blocking
     int wstatus;
     pid_t result = waitpid(job->pid, &wstatus, WNOHANG);
-    if (result > 0) {
+    if (result > 0 && WIFEXITED(wstatus)) {
         job->is_running = false;
     }
 
@@ -95,7 +93,10 @@ void job_display(job_t *job) {
     if (job->most_recent) marker = '+';
     else if (job->second_most_recent) marker = '-';
     else marker = ' ';
-    const char *status = job->is_running ? "Running" : "Done";
 
-    fprintf(stdout, "[%d]%c  %-24s%s\n", job->job_id, marker, status, job->cmd);
+    if (job->is_running) {
+        fprintf(stdout, "[%d]%c  %-24s%s &\n", job->job_id, marker, "Running", job->cmd);
+    } else {
+        fprintf(stdout, "[%d]%c  %-24s%s\n", job->job_id, marker, "Done", job->cmd);
+    }
 }

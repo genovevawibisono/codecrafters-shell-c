@@ -165,11 +165,25 @@ static void dictionary_maintain(dictionary_t *dictionary) {
 }
 
 void dictionary_jobs(dictionary_t *dictionary) {
-    for (int i = 0; i < dictionary->max_capacity; i++) {
+    for (int i = 0; i < (int)dictionary->max_capacity; i++) {
+        job_t *prev = NULL;
         job_t *curr = dictionary->items[i];
         while (curr != NULL) {
+            job_t *next = curr->next;
             job_display(curr);
-            curr = curr->next;
+            if (!curr->is_running) {
+                if (prev == NULL) {
+                    dictionary->items[i] = next;
+                } else {
+                    prev->next = next;
+                }
+                free(curr->cmd);
+                free(curr);
+                dictionary->current_capacity--;
+            } else {
+                prev = curr;
+            }
+            curr = next;
         }
     }
 }

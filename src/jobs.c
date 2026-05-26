@@ -47,6 +47,7 @@ job_t *job_new(struct command_context *ctx) {
     new->cmd = strdup(cmd);
     new->is_running = true;
     new->most_recent = true;
+    new->second_most_recent = false;
     new->next = NULL;
 
     job_count++;
@@ -90,7 +91,9 @@ void job_display(job_t *job) {
         job->is_running = false;
     }
 
-    char marker = job->most_recent ? '+' : ' ';
+    char marker; 
+    marker = job->most_recent ? '+' : ' ';
+    marker = job->second_most_recent ? '-' : ' ';
     const char *status = job->is_running ? "Running" : "Done";
 
     fprintf(stdout, "[%d]%c  %-24s%s\n", job->job_id, marker, status, job->cmd);

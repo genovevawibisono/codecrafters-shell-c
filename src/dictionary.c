@@ -153,6 +153,11 @@ static void dictionary_maintain(dictionary_t *dictionary) {
     for (int i = 0; i < dictionary->max_capacity; i++) {
         job_t *curr = dictionary->items[i];
         while (curr != NULL) {
+            if (curr->most_recent == true) {
+                curr->second_most_recent = true;
+            } else {
+                curr->second_most_recent = false;
+            }
             curr->most_recent = false;
             curr = curr->next;
         }

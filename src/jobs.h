@@ -11,6 +11,7 @@ typedef struct job {
     char *cmd;
     bool is_running;
     bool most_recent;
+    bool second_most_recent;
 
     // for dictionary separate chaining
     struct job *next;

@@ -34,10 +34,19 @@ job_t *job_new(struct command_context *ctx) {
 
     free(exe);
 
+    // build command string once, while ctx is still valid
+    char cmd[MAX_COMMAND_LENGTH] = {0};
+    for (int i = 0; i < ctx->argc; i++) {
+        if (i > 0) strcat(cmd, " ");
+        strcat(cmd, ctx->argv[i]);
+    }
+    strcat(cmd, " &");
+
     new->pid = pid;
     new->job_id = ++job_id_counter;
-    new->ctx = ctx;
+    new->cmd = strdup(cmd);
     new->is_running = true;
+    new->most_recent = true;
     new->next = NULL;
 
     job_count++;
@@ -74,7 +83,15 @@ int job_remove(pid_t pid) {
 }
 
 void job_display(job_t *job) {
-    // just printing out the pid first in the mean time
-    // refine later
-    fprintf(stdout, "[%d] %d\n", job->job_id, job->pid);
+    // check if process is still alive without blocking
+    int wstatus;
+    pid_t result = waitpid(job->pid, &wstatus, WNOHANG);
+    if (result > 0) {
+        job->is_running = false;
+    }
+
+    char marker = job->most_recent ? '+' : ' ';
+    const char *status = job->is_running ? "Running" : "Done";
+
+    fprintf(stdout, "[%d]%c  %-24s%s\n", job->job_id, marker, status, job->cmd);
 }

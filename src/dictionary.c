@@ -3,6 +3,7 @@
 // Static function headers
 static int dictionary_expand(dictionary_t *dictionary);
 static unsigned int hash(pid_t job_pid, unsigned int max_capacity);
+static void dictionary_maintain(dictionary_t *dictionary);
 
 dictionary_t *dictionary = NULL;
 
@@ -41,6 +42,8 @@ int dictionary_add(dictionary_t *dictionary, job_t *job) {
             return -1;
         }
     }
+
+    dictionary_maintain(dictionary);
 
     unsigned int index = hash(job->pid, dictionary->max_capacity);
     job->next = dictionary->items[index];
@@ -107,10 +110,8 @@ int dictionary_remove(dictionary_t *dictionary, pid_t job_pid) {
 
     // removal at the beginning of the linked list
     if (node->pid == job_pid) {
-        job_t *n = node->next;
-        n->next = dictionary->items[index];
-        dictionary->items[index] = n;
-
+        dictionary->items[index] = node->next;
+        free(node->cmd);
         free(node);
         return 0;
     }
@@ -128,6 +129,7 @@ int dictionary_remove(dictionary_t *dictionary, pid_t job_pid) {
     }
 
     prev->next = temp->next;
+    free(temp->cmd);
     free(temp);
 
     return 0;
@@ -141,6 +143,26 @@ void dictionary_display(dictionary_t *dictionary) {
         job_t *curr = dictionary->items[i];
         while (curr != NULL) {
             // print curr job
+            job_display(curr);
+            curr = curr->next;
+        }
+    }
+}
+
+static void dictionary_maintain(dictionary_t *dictionary) {
+    for (int i = 0; i < dictionary->max_capacity; i++) {
+        job_t *curr = dictionary->items[i];
+        while (curr != NULL) {
+            curr->most_recent = false;
+            curr = curr->next;
+        }
+    } 
+}
+
+void dictionary_jobs(dictionary_t *dictionary) {
+    for (int i = 0; i < dictionary->max_capacity; i++) {
+        job_t *curr = dictionary->items[i];
+        while (curr != NULL) {
             job_display(curr);
             curr = curr->next;
         }

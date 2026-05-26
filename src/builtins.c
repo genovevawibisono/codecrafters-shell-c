@@ -1,4 +1,5 @@
 #include "builtins.h"
+#include "dictionary.h"
 
 struct command commands[] = {
     { "exit", shell_exit },
@@ -412,4 +413,6 @@ static void shell_jobs(struct command_context *ctx) {
         fprintf(stderr, "[shell jobs] command context is NULL\n");
         return;
     }
+
+    dictionary_jobs(dictionary);
 }

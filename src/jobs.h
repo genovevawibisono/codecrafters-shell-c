@@ -8,8 +8,9 @@
 typedef struct job {
     pid_t pid;
     unsigned int job_id;
-    struct command_context *ctx;
+    char *cmd;
     bool is_running;
+    bool most_recent;
 
     // for dictionary separate chaining
     struct job *next;

@@ -5,6 +5,7 @@ static int dictionary_expand(dictionary_t *dictionary);
 static unsigned int hash(pid_t job_pid, unsigned int max_capacity);
 static void dictionary_maintain(dictionary_t *dictionary);
 static int compare_job_id(const void *a, const void *b);
+static void dictionary_purge_done(dictionary_t *dictionary);
 
 dictionary_t *dictionary = NULL;
 
@@ -112,30 +113,45 @@ int dictionary_remove(dictionary_t *dictionary, pid_t job_pid) {
     // removal at the beginning of the linked list
     if (node->pid == job_pid) {
         dictionary->items[index] = node->next;
+        job_id_recycle(node->job_id);
         free(node->cmd);
         free(node);
+        dictionary->current_capacity--;
         return 0;
     }
 
-    job_t *prev;
-    job_t *temp = node;
-    while (temp->next != NULL && temp->pid != job_pid) {
-        job_t *prev = temp;
+    job_t *prev = node;
+    job_t *temp = node->next;
+    while (temp != NULL && temp->pid != job_pid) {
+        prev = temp;
         temp = temp->next;
     }
 
     if (temp == NULL) {
-        fprintf(stderr, "[dictionary remove] job with associated pid doesn\'t exist\n");
+        fprintf(stderr, "[dictionary remove] job with associated pid doesn't exist\n");
         return -1;
     }
 
-    int ret = temp->job_id;
-
     prev->next = temp->next;
+    job_id_recycle(temp->job_id);
     free(temp->cmd);
     free(temp);
+    dictionary->current_capacity--;
 
-    return ret;
+    return 0;
+}
+
+static void dictionary_purge_done(dictionary_t *dictionary) {
+    for (int i = 0; i < (int)dictionary->max_capacity; i++) {
+        job_t *curr = dictionary->items[i];
+        while (curr != NULL) {
+            job_t *next = curr->next;
+            if (!curr->is_running) {
+                dictionary_remove(dictionary, curr->pid);
+            }
+            curr = next;
+        }
+    }
 }
 
 void dictionary_display(dictionary_t *dictionary) {
@@ -224,29 +240,7 @@ void dictionary_reap(dictionary_t *dictionary) {
     }
 
     free(done);
-
-    // remove done jobs from table
-    for (int i = 0; i < (int)dictionary->max_capacity; i++) {
-        job_t *prev = NULL;
-        job_t *curr = dictionary->items[i];
-        while (curr != NULL) {
-            job_t *next = curr->next;
-            if (!curr->is_running) {
-                if (prev == NULL) {
-                    dictionary->items[i] = next;
-                } else {
-                    prev->next = next;
-                }
-                job_id_recycle(curr->job_id);
-                free(curr->cmd);
-                free(curr);
-                dictionary->current_capacity--;
-            } else {
-                prev = curr;
-            }
-            curr = next;
-        }
-    }
+    dictionary_purge_done(dictionary);
 }
 
 static int compare_job_id(const void *a, const void *b) {
@@ -284,27 +278,5 @@ void dictionary_jobs(dictionary_t *dictionary) {
     }
 
     free(jobs);
-
-    // remove done jobs
-    for (int i = 0; i < (int)dictionary->max_capacity; i++) {
-        job_t *prev = NULL;
-        job_t *curr = dictionary->items[i];
-        while (curr != NULL) {
-            job_t *next = curr->next;
-            if (!curr->is_running) {
-                if (prev == NULL) {
-                    dictionary->items[i] = next;
-                } else {
-                    prev->next = next;
-                }
-                job_id_recycle(curr->job_id);
-                free(curr->cmd);
-                free(curr);
-                dictionary->current_capacity--;
-            } else {
-                prev = curr;
-            }
-            curr = next;
-        }
-    }
+    dictionary_purge_done(dictionary);
 }

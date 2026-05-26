@@ -91,9 +91,10 @@ void job_display(job_t *job) {
         job->is_running = false;
     }
 
-    char marker; 
-    marker = job->most_recent ? '+' : ' ';
-    marker = job->second_most_recent ? '-' : ' ';
+    char marker;
+    if (job->most_recent) marker = '+';
+    else if (job->second_most_recent) marker = '-';
+    else marker = ' ';
     const char *status = job->is_running ? "Running" : "Done";
 
     fprintf(stdout, "[%d]%c  %-24s%s\n", job->job_id, marker, status, job->cmd);

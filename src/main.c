@@ -18,7 +18,7 @@ int main(void) {
     char *line;
 
     while (1) {
-        // Use readline instead of fgets - this is what enables TAB completion
+        dictionary_reap(dictionary);
         line = readline("$ ");
         
         // Check if we got EOF (Ctrl+D)

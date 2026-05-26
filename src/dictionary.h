@@ -21,5 +21,6 @@ int dictionary_add(dictionary_t *dictionary, job_t *job);
 int dictionary_remove(dictionary_t *dictionary, pid_t job_pid);
 void dictionary_display(dictionary_t *dictionary);
 void dictionary_jobs(dictionary_t *dictionary);
+void dictionary_reap(dictionary_t *dictionary);
 
 #endif

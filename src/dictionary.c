@@ -4,6 +4,7 @@
 static int dictionary_expand(dictionary_t *dictionary);
 static unsigned int hash(pid_t job_pid, unsigned int max_capacity);
 static void dictionary_maintain(dictionary_t *dictionary);
+static int compare_job_id(const void *a, const void *b);
 
 dictionary_t *dictionary = NULL;
 
@@ -162,6 +163,87 @@ static void dictionary_maintain(dictionary_t *dictionary) {
             curr = curr->next;
         }
     } 
+}
+
+void dictionary_reap(dictionary_t *dictionary) {
+    if (dictionary->current_capacity == 0) return;
+
+    job_t **jobs = malloc(dictionary->current_capacity * sizeof(job_t *));
+    if (!jobs) return;
+    int count = 0;
+
+    for (int i = 0; i < (int)dictionary->max_capacity; i++) {
+        job_t *curr = dictionary->items[i];
+        while (curr != NULL) {
+            jobs[count++] = curr;
+            curr = curr->next;
+        }
+    }
+
+    qsort(jobs, count, sizeof(job_t *), compare_job_id);
+
+    // recompute markers before checking exits
+    for (int i = 0; i < count; i++) {
+        jobs[i]->most_recent = false;
+        jobs[i]->second_most_recent = false;
+    }
+    if (count >= 1) jobs[count - 1]->most_recent = true;
+    if (count >= 2) jobs[count - 2]->second_most_recent = true;
+
+    free(jobs);
+
+    // check each job for completion and print+remove done ones in job_id order
+    // collect done jobs first (in bucket order), sort, print, then remove
+    job_t **done = malloc(dictionary->current_capacity * sizeof(job_t *));
+    if (!done) return;
+    int done_count = 0;
+
+    for (int i = 0; i < (int)dictionary->max_capacity; i++) {
+        job_t *curr = dictionary->items[i];
+        while (curr != NULL) {
+            int wstatus;
+            pid_t result = waitpid(curr->pid, &wstatus, WNOHANG);
+            if (result > 0 && WIFEXITED(wstatus)) {
+                curr->is_running = false;
+                done[done_count++] = curr;
+            }
+            curr = curr->next;
+        }
+    }
+
+    qsort(done, done_count, sizeof(job_t *), compare_job_id);
+
+    for (int i = 0; i < done_count; i++) {
+        char marker;
+        if (done[i]->most_recent) marker = '+';
+        else if (done[i]->second_most_recent) marker = '-';
+        else marker = ' ';
+        fprintf(stdout, "[%d]%c  %-24s%s\n", done[i]->job_id, marker, "Done", done[i]->cmd);
+    }
+
+    free(done);
+
+    // remove done jobs from table
+    for (int i = 0; i < (int)dictionary->max_capacity; i++) {
+        job_t *prev = NULL;
+        job_t *curr = dictionary->items[i];
+        while (curr != NULL) {
+            job_t *next = curr->next;
+            if (!curr->is_running) {
+                if (prev == NULL) {
+                    dictionary->items[i] = next;
+                } else {
+                    prev->next = next;
+                }
+                free(curr->cmd);
+                free(curr);
+                dictionary->current_capacity--;
+            } else {
+                prev = curr;
+            }
+            curr = next;
+        }
+    }
 }
 
 static int compare_job_id(const void *a, const void *b) {

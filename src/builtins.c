@@ -9,6 +9,7 @@ struct command commands[] = {
     { "cd", shell_cd },
     { "history", shell_history },
     { "jobs", shell_jobs },
+    { "complete", shell_complete },
 };
 
 char *command_names[] = {
@@ -19,6 +20,7 @@ char *command_names[] = {
     "cd",
     "history",
     "jobs",
+    "complete",
     NULL,
 };
 
@@ -415,4 +417,8 @@ static void shell_jobs(struct command_context *ctx) {
     }
 
     dictionary_jobs(dictionary);
+}
+
+static void shell_complete(struct command_context *ctx) {
+
 }

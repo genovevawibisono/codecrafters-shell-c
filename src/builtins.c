@@ -420,5 +420,20 @@ static void shell_jobs(struct command_context *ctx) {
 }
 
 static void shell_complete(struct command_context *ctx) {
+    if (ctx->argc >= 2 && strcmp(ctx->argv[1], "-p") == 0) {
+        const char *command = (ctx->argc >= 3) ? ctx->argv[2] : NULL;
+        int found = complete_print(command);
+        if (!found && command != NULL) {
+            fprintf(stderr, "complete: %s: no completion specification\n", command);
+        }
+        return;
+    }
 
+    if (ctx->argc >= 4 && strcmp(ctx->argv[1], "-F") == 0) {
+        // complete -F func_name command
+        complete_add("-F", ctx->argv[2], ctx->argv[3]);
+        return;
+    }
+
+    fprintf(stderr, "complete: usage: complete -p [command] | complete -F func command\n");
 }

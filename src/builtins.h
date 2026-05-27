@@ -4,6 +4,7 @@
 #include "structs.h"
 #include "history.h"
 #include "utilities.h"
+#include "complete.h"
 
 /* INCLUDE LIBRARIES */
 #include <stdio.h>

@@ -28,6 +28,50 @@ static char *command_generator(const char *text, int state) {
     return path_executable_generator(text, state);
 }
 
+static char **prog_results = NULL;
+static int prog_idx = 0;
+
+static char *programmatic_generator(const char *text, int state) {
+    if (!state) prog_idx = 0;
+    while (prog_results && prog_results[prog_idx]) {
+        char *entry = prog_results[prog_idx++];
+        if (strncmp(entry, text, strlen(text)) == 0)
+            return strdup(entry);
+    }
+    return NULL;
+}
+
+static char **run_completion_cmd(const char *cmd, const char *command_name, const char *word, const char *prev) {
+    char buf[MAX_COMMAND_LENGTH * 2];
+    snprintf(buf, sizeof(buf), "%s %s %s %s", cmd, command_name, word ? word : "", prev ? prev : "");
+
+    // set COMP_LINE / COMP_POINT for scripts that use them
+    setenv("COMP_LINE", rl_line_buffer, 1);
+    char point_str[16];
+    snprintf(point_str, sizeof(point_str), "%d", rl_point);
+    setenv("COMP_POINT", point_str, 1);
+
+    FILE *fp = popen(buf, "r");
+    if (!fp) return NULL;
+
+    int capacity = 64, count = 0;
+    char **results = malloc(capacity * sizeof(char *));
+    char line[MAX_COMMAND_LENGTH];
+
+    while (fgets(line, sizeof(line), fp)) {
+        size_t len = strlen(line);
+        if (len > 0 && line[len - 1] == '\n') line[len - 1] = '\0';
+        if (count >= capacity - 1) {
+            capacity *= 2;
+            results = realloc(results, capacity * sizeof(char *));
+        }
+        results[count++] = strdup(line);
+    }
+    results[count] = NULL;
+    pclose(fp);
+    return results;
+}
+
 char **command_completion(const char *text, int start, int end) {
     if (text == NULL) {
         fprintf(stderr, "[command completion] text is NULL\n");
@@ -40,12 +84,26 @@ char **command_completion(const char *text, int start, int end) {
 
     char command[MAX_COMMAND_LENGTH] = {0};
     sscanf(rl_line_buffer, "%s", command);
+
     if (strcmp(command, "cd") == 0) {
         rl_completion_append_character = '\0';
         return rl_completion_matches(text, directory_generator);
     }
 
-    /* For arguments (start != 0) provide filename completion from CWD */
+    complete_node_t *spec = complete_find(command);
+    if (spec && strcmp(spec->flag, "-C") == 0) {
+        if (prog_results) {
+            for (int i = 0; prog_results[i]; i++) free(prog_results[i]);
+            free(prog_results);
+        }
+        // find the word before the current one
+        char prev[MAX_COMMAND_LENGTH] = {0};
+        sscanf(rl_line_buffer, "%*s %s", prev);
+        prog_results = run_completion_cmd(spec->value, command, text, prev);
+        rl_completion_append_character = ' ';
+        return rl_completion_matches(text, programmatic_generator);
+    }
+
     rl_filename_completion_desired = 1;
     return rl_completion_matches(text, rl_filename_completion_function);
 }

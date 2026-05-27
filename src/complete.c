@@ -50,6 +50,15 @@ int complete_add(char *flag, char *value, char *command) {
     return complete_node_new(command, flag, value);
 }
 
+complete_node_t *complete_find(const char *command) {
+    complete_node_t *curr = complete_list;
+    while (curr != NULL) {
+        if (strcmp(curr->command, command) == 0) return curr;
+        curr = curr->next;
+    }
+    return NULL;
+}
+
 int complete_print(const char *command) {
     int found = 0;
     complete_node_t *curr = complete_list;

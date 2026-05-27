@@ -420,7 +420,12 @@ static void shell_jobs(struct command_context *ctx) {
 }
 
 static void shell_complete(struct command_context *ctx) {
-    if (ctx->argc >= 2 && strcmp(ctx->argv[1], "-p") == 0) {
+    if (ctx->argc < 2) {
+        fprintf(stderr, "complete: usage: complete -p [command] | complete <flag> <value> <command>\n");
+        return;
+    }
+
+    if (strcmp(ctx->argv[1], "-p") == 0) {
         const char *command = (ctx->argc >= 3) ? ctx->argv[2] : NULL;
         int found = complete_print(command);
         if (!found && command != NULL) {
@@ -429,11 +434,11 @@ static void shell_complete(struct command_context *ctx) {
         return;
     }
 
-    if (ctx->argc >= 4 && strcmp(ctx->argv[1], "-F") == 0) {
-        // complete -F func_name command
-        complete_add("-F", ctx->argv[2], ctx->argv[3]);
+    // complete <flag> <value> <command>  e.g. -F, -C, -W ...
+    if (ctx->argc >= 4 && ctx->argv[1][0] == '-') {
+        complete_add(ctx->argv[1], ctx->argv[2], ctx->argv[3]);
         return;
     }
 
-    fprintf(stderr, "complete: usage: complete -p [command] | complete -F func command\n");
+    fprintf(stderr, "complete: usage: complete -p [command] | complete <flag> <value> <command>\n");
 }

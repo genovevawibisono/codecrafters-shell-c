@@ -55,7 +55,7 @@ int complete_print(const char *command) {
     complete_node_t *curr = complete_list;
     while (curr != NULL) {
         if (command == NULL || strcmp(curr->command, command) == 0) {
-            fprintf(stdout, "complete %s %s %s\n", curr->flag, curr->value, curr->command);
+            fprintf(stdout, "complete %s '%s' %s\n", curr->flag, curr->value, curr->command);
             found = 1;
         }
         curr = curr->next;

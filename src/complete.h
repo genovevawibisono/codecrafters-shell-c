@@ -15,6 +15,7 @@ typedef struct complete_node {
 int complete_add(char *flag, char *value, char *command);
 int complete_print(const char *command);
 complete_node_t *complete_find(const char *command);
+void complete_remove(const char *command);
 
 extern complete_node_t *complete_list;
 

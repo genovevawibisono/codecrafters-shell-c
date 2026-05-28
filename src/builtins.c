@@ -434,6 +434,11 @@ static void shell_complete(struct command_context *ctx) {
         return;
     }
 
+    if (ctx->argc >= 3 && strcmp(ctx->argv[1], "-r") == 0) {
+        complete_remove(ctx->argv[2]);
+        return;
+    }
+
     // complete <flag> <value> <command>  e.g. -F, -C, -W ...
     if (ctx->argc >= 4 && ctx->argv[1][0] == '-') {
         complete_add(ctx->argv[1], ctx->argv[2], ctx->argv[3]);

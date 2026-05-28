@@ -96,10 +96,19 @@ char **command_completion(const char *text, int start, int end) {
             for (int i = 0; prog_results[i]; i++) free(prog_results[i]);
             free(prog_results);
         }
-        // find the word before the current one
+        // find the word immediately before text in the line buffer
         char prev[MAX_COMMAND_LENGTH] = {0};
-        sscanf(rl_line_buffer, "%*s %s", prev);
+        int text_start = rl_point - (int)strlen(text);
+        if (text_start > 0) {
+            char before[MAX_COMMAND_LENGTH] = {0};
+            strncpy(before, rl_line_buffer, text_start);
+            char *last = strtok(before, " \t");
+            char *next;
+            while ((next = strtok(NULL, " \t")) != NULL) last = next;
+            if (last) strncpy(prev, last, sizeof(prev) - 1);
+        }
         prog_results = run_completion_cmd(spec->value, command, text, prev);
+        rl_attempted_completion_over = 1;
         rl_completion_append_character = ' ';
         return rl_completion_matches(text, programmatic_generator);
     }

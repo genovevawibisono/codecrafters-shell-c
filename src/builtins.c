@@ -10,6 +10,7 @@ struct command commands[] = {
     { "history", shell_history },
     { "jobs", shell_jobs },
     { "complete", shell_complete },
+    { "declare", shell_declare },
 };
 
 char *command_names[] = {
@@ -21,6 +22,7 @@ char *command_names[] = {
     "history",
     "jobs",
     "complete",
+    "declare",
     NULL,
 };
 
@@ -446,4 +448,8 @@ static void shell_complete(struct command_context *ctx) {
     }
 
     fprintf(stderr, "complete: usage: complete -p [command] | complete <flag> <value> <command>\n");
+}
+
+static void shell_declare(struct command_context *ctx) {
+
 }

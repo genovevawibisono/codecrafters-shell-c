@@ -38,11 +38,12 @@ static void shell_history(struct command_context *ctx);
 
 /* OTHER HELPERS TO MAKE LIFE EASIER */
 extern struct command commands[];
-#define NUM_COMMANDS 8
+#define NUM_COMMANDS 9
 
 extern char *command_names[];
 
 static void shell_jobs(struct command_context *ctx);
 static void shell_complete(struct command_context *ctx);
+static void shell_declare(struct command_context *ctx);
 
 #endif

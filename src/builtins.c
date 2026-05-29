@@ -451,5 +451,9 @@ static void shell_complete(struct command_context *ctx) {
 }
 
 static void shell_declare(struct command_context *ctx) {
-
+    if (strcmp(ctx->argv[1], "-p") == 0) {
+        const char *name = (ctx->argc >= 3) ? ctx->argv[2] : NULL;
+        fprintf(stderr, "declare: %s: not found\n", name);
+        return;
+    }
 }

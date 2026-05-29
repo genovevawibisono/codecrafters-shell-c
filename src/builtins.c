@@ -457,6 +457,10 @@ static void shell_declare(struct command_context *ctx) {
         if (ctx->argc < 3) return;
         const char *name = ctx->argv[2];
         const char *value = var_get(name);
+        if (!starts_with_regex(name, "[a-zA-Z_]")) {
+            fprintf(stderr, "declare: `%s=%s`: not a valid identifier\n", name, value);
+            return;
+        }
         if (value == NULL) {
             fprintf(stderr, "declare: %s: not found\n", name);
         } else {
@@ -468,6 +472,18 @@ static void shell_declare(struct command_context *ctx) {
     // declare NAME=VALUE
     char *eq = strchr(ctx->argv[1], '=');
     if (eq == NULL) return;
+
+    // validate: name must match [a-zA-Z_][a-zA-Z0-9_]*
+    int name_len = eq - ctx->argv[1];
+    bool valid = name_len > 0 && (isalpha(ctx->argv[1][0]) || ctx->argv[1][0] == '_');
+    for (int i = 1; i < name_len && valid; i++) {
+        valid = isalnum(ctx->argv[1][i]) || ctx->argv[1][i] == '_';
+    }
+    if (!valid) {
+        fprintf(stderr, "declare: `%s': not a valid identifier\n", ctx->argv[1]);
+        return;
+    }
+
     *eq = '\0';
     var_set(ctx->argv[1], eq + 1);
     *eq = '=';

@@ -268,3 +268,24 @@ bool is_executable(const char *path) {
 
     return S_ISREG(st.st_mode) && (st.st_mode & S_IXUSR);
 }
+
+bool starts_with_regex(const char *str, const char *pattern) {
+    regex_t regex;
+    char anchored[256];
+
+    // Force the pattern to start at position 0
+    snprintf(anchored, sizeof(anchored), "^%s", pattern);
+
+    // Step 1: Compile the pattern
+    if (regcomp(&regex, anchored, REG_EXTENDED) != 0) {
+        return -1; // bad pattern
+    }
+
+    // Step 2: Execute — check for a match
+    int result = regexec(&regex, str, 0, NULL, 0);
+
+    // Step 3: Always free memory
+    regfree(&regex);
+
+    return result == 0;
+}

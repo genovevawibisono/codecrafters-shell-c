@@ -5,6 +5,7 @@
 #include "history.h"
 #include "utilities.h"
 #include "complete.h"
+#include "variables.h"
 
 /* INCLUDE LIBRARIES */
 #include <stdio.h>

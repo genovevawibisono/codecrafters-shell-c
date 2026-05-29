@@ -451,9 +451,24 @@ static void shell_complete(struct command_context *ctx) {
 }
 
 static void shell_declare(struct command_context *ctx) {
+    if (ctx->argc < 2) return;
+
     if (strcmp(ctx->argv[1], "-p") == 0) {
-        const char *name = (ctx->argc >= 3) ? ctx->argv[2] : NULL;
-        fprintf(stderr, "declare: %s: not found\n", name);
+        if (ctx->argc < 3) return;
+        const char *name = ctx->argv[2];
+        const char *value = var_get(name);
+        if (value == NULL) {
+            fprintf(stderr, "declare: %s: not found\n", name);
+        } else {
+            fprintf(stdout, "declare -- %s=\"%s\"\n", name, value);
+        }
         return;
     }
+
+    // declare NAME=VALUE
+    char *eq = strchr(ctx->argv[1], '=');
+    if (eq == NULL) return;
+    *eq = '\0';
+    var_set(ctx->argv[1], eq + 1);
+    *eq = '=';
 }

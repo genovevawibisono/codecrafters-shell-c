@@ -1,4 +1,5 @@
 #include "utilities.h"
+#include <ctype.h>
 
 static void trim_newline(char *s);
 static void debug_print_context(struct command_context *ctx);
@@ -52,6 +53,26 @@ void parse_command_line(char *line, struct command_context *ctx) {
             }
         }
         
+        // Expand $VAR outside single quotes
+        if (*p == '$' && quote_type != '\'') {
+            char var_name[MAX_COMMAND_LENGTH] = {0};
+            int vlen = 0;
+            const char *q = p + 1;
+            if (isalpha(*q) || *q == '_') {
+                while (isalnum(*q) || *q == '_') {
+                    var_name[vlen++] = *q++;
+                }
+                const char *val = var_get(var_name);
+                if (val) {
+                    for (int i = 0; val[i]; i++) {
+                        token_buffer[buffer_pos++] = val[i];
+                    }
+                }
+                p = q;
+                continue;
+            }
+        }
+
         // Handle quote characters
         if ((*p == '\'' || *p == '"') && quote_type == '\0') {
             quote_type = *p;
